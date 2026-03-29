@@ -1,4 +1,9 @@
 const mongoose= require("mongoose");
+try {
+  mongoose.set('returnDocument', 'after');
+} catch (e) {
+
+}
 const MONGO_USERNAME = process.env.MONGO_USERNAME;
 const MONGO_PASSWORD = process.env.MONGO_PASSWORD;
 const MONGO_DB_NAME = process.env.MONGO_DB_NAME;
@@ -11,9 +16,7 @@ const connectDB = async () => {
     console.log("Connected to MongoDB");
   } catch (error) {
     console.error("Error connecting to MongoDB:", error.message);
-    console.warn(
-      "Server keeps running — auth/DB routes may fail until MongoDB is reachable."
-    );
+    process.exit(1);
   }
 };
 
