@@ -48,16 +48,16 @@ export async function rejectRequest(data) {
 
 // Auth
 export async function register(data) {
-  return api.post('/auth/register', data);
+  return api.post('/api/auth/register', data);
 }
 export async function login(data) {
-  return api.post('/auth/login', data);
+  return api.post('/api/auth/login', data);
 }
 export async function sendOtp(data) {
-  return api.post('/auth/otp/send', data);
+  return api.post('/api/auth/otp/send', data);
 }
 export async function verifyOtp(data) {
-  return api.post('/auth/otp/verify', data);
+  return api.post('/api/auth/otp/verify', data);
 }
 export async function getChatHistory(otherUserId) {
   return api.get('/chat/history', {

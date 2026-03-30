@@ -23,7 +23,7 @@ export default defineConfig({
       "/api": {
         target: "http://localhost:9090",
         changeOrigin: true,
-        rewrite: (p) => p.replace(/^\/api/, ""),
+        // keep the /api prefix when proxying so backend routes mounted at /api/* continue to match
       },
     },
   },
