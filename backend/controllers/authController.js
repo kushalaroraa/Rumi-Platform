@@ -50,6 +50,10 @@ exports.registerUser = async (req, res) => {
     });
   } catch (err) {
     console.error('register error:', err);
+    const msg = String(err?.message || '');
+    if (msg.includes('before initial connection is complete')) {
+      return res.status(503).json({ success: false, message: 'Database is temporarily unavailable. Please try again in a moment.' });
+    }
     return res.status(500).json({ success: false, message: err.message || 'Server error.' });
   }
 }
@@ -89,6 +93,10 @@ exports.loginUser = async (req, res) => {
     });
   } catch (err) {
     console.error('login error:', err);
+    const msg = String(err?.message || '');
+    if (msg.includes('before initial connection is complete')) {
+      return res.status(503).json({ success: false, message: 'Database is temporarily unavailable. Please try again in a moment.' });
+    }
     return res.status(500).json({ success: false, message: err.message || 'Server error.' });
   }
 }

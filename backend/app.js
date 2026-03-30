@@ -1,4 +1,3 @@
-require("./config/env");
 const express = require("express");
 const cors = require("cors");
 const { getAssistantReply } = require("./services/geminiService");

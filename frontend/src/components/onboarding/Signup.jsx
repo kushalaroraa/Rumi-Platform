@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import { Mail, Lock, Eye, EyeOff, Check } from 'lucide-react'; // Simulating Google/Apple with generic icons if needed, or text
+import { Mail, Lock, Eye, EyeOff, Check, User } from 'lucide-react'; // Simulating Google/Apple with generic icons if needed, or text
 import { AuthLayout } from './AuthLayout';
 import { register } from '../../services/api';
 
-// Mock icons for Google/Apple since they aren't in Lucide
 const GoogleIcon = () => <svg className="w-5 h-5" viewBox="0 0 24 24">
     <path fill="currentColor" d="M21.35 11.1h-9.17v2.73h6.51c-.33 3.81-3.5 5.44-6.5 5.44C8.36 19.27 5 16.25 5 12c0-4.1 3.2-7.27 7.2-7.27 3.09 0 4.9 1.97 4.9 1.97L19 4.72S16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12c0 5.05 4.13 10 10.22 10 5.35 0 9.25-3.67 9.25-9.09 0-1.15-.15-1.81-.15-1.81z" />
   </svg>;
@@ -18,6 +17,7 @@ export const SignupScreen = ({
   const [showPassword, setShowPassword] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const [email, setEmail] = useState(initialEmail ?? '');
+  const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
@@ -27,6 +27,10 @@ export const SignupScreen = ({
     const trimmed = email.trim();
     setError('');
     if (!agreed) return;
+    if (!name?.trim() || name.trim().length < 3) {
+      setError('Name is required and must be at least 3 characters.');
+      return;
+    }
     if (!trimmed) return;
     if (!password) {
       setError('Password is required.');
@@ -38,13 +42,17 @@ export const SignupScreen = ({
     }
     try {
       setSubmitting(true);
+      // debug: log payload and base url in browser console for troubleshooting
+      console.debug('signup payload', { name: name.trim(), email: trimmed });
       const res = await register({
+        name: name.trim(),
         email: trimmed,
-        password,
-        name: ''
+        password
       });
       if (!res?.data?.success) {
-        setError(res?.data?.message || 'Failed to register.');
+        const msg = res?.data?.message || 'Failed to register.';
+        console.error('signup failed response', res?.data);
+        setError(msg);
         return;
       }
       const token = res?.data?.token;
@@ -53,7 +61,11 @@ export const SignupScreen = ({
       if (user) localStorage.setItem('rumi_user', JSON.stringify(user));
       onNext(trimmed);
     } catch (err) {
-      setError(err?.response?.data?.message || err?.message || 'Registration failed.');
+      // Better axios/network error handling: if no response, it's a network/CORS/error reaching server
+      console.error('signup error', err);
+      const networkMsg = 'Network error: could not reach server. Start backend (cd backend && npm run dev) and ensure it runs on the expected port.';
+      const msg = err?.response?.data?.message || err?.message || networkMsg;
+      setError(msg);
     } finally {
       setSubmitting(false);
     }
@@ -83,6 +95,13 @@ export const SignupScreen = ({
 
         {/* Inputs */}
         <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">Full name</label>
+            <div className="relative">
+                <User className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input type="text" placeholder="Enter your full name" value={name} onChange={e => setName(e.target.value)} className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-xl focus:bg-white focus:border-[#4E668A] focus:ring-4 focus:ring-[#4E668A]/10 transition-all outline-none text-slate-900 placeholder:text-slate-400" required />
+              </div>
+          </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1.5">Email or Phone Number</label>
             <div className="relative">

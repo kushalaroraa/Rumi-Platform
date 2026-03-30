@@ -5,7 +5,22 @@
  */
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { getGeminiApiKey, cleanEnvValue } = require("../config/env");
+
+function cleanEnvValue(value) {
+  if (value == null) return "";
+  const s = String(value).trim();
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
+    return s.slice(1, -1);
+  }
+  return s;
+}
+
+function getGeminiApiKey() {
+  return cleanEnvValue(process.env.GEMINI_API_KEY);
+}
 
 function getPreferredModelName() {
   return cleanEnvValue(process.env.GEMINI_MODEL || "");
