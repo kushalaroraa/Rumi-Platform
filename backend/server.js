@@ -1,4 +1,5 @@
 require("./config/env");
+require('dotenv').config();
 const { logGeminiKeyStatus } = require("./config/env");
 
 const app = require("./app");

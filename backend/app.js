@@ -25,9 +25,11 @@ app.post("/assistant/chat", async (req, res) => {
       error: err.message,
     });
   }
+});
+
 // Mount API routes
 const authRoutes = require('./routes/authRoutes');
-app.use('/api/auth', authRoutes);
+app.use('/auth', authRoutes); // match frontend /auth/register and /auth/login
 
 // Example admin-only route to verify role-based access
 const { authenticate, authorize } = require('./middleware/authMiddleware');
