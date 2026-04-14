@@ -25,6 +25,11 @@ export default defineConfig({
         changeOrigin: true,
         // keep the /api prefix when proxying so backend routes mounted at /api/* continue to match
       },
+      "/uploads": {
+        target: "http://localhost:9090",
+        changeOrigin: true,
+        // Proxy uploaded files to the backend so <img src="/uploads/..."> works in dev
+      }
     },
   },
 });
