@@ -7,6 +7,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Serve uploaded files (profile photos) from /uploads
+const path = require('path');
+const uploadsPath = path.join(__dirname, 'uploads');
+app.use('/uploads', express.static(uploadsPath));
+
 // Test route
 app.get("/", (req, res) => {
   res.send("API is running");
