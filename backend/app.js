@@ -38,6 +38,10 @@ app.use('/api/auth', authRoutes);
 const userRoutes = require('./routes/userRoutes');
 app.use('/user', userRoutes);
 
+// RAG chatbot routes
+const ragRoutes = require('./routes/ragRoutes');
+app.use('/api/rag', ragRoutes);
+
 // Example admin-only route to verify role-based access
 const { authenticate, authorize } = require('./middleware/authMiddleware');
 app.get('/api/admin', authenticate, authorize(['admin']), (req, res) => {

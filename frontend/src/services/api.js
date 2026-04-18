@@ -67,9 +67,14 @@ export async function getChatHistory(otherUserId) {
   });
 }
 
-// Assistant (Gemini)
+// Assistant (Gemini RAG)
+export async function sendRagMessage(payload) { //The payload contains the user query in the format { message: string }
+  return api.post('/api/rag/chat', payload);
+}
+
+// Backwards-compatible alias for older callers
 export async function sendAssistantMessage(payload) {
-  return api.post('/assistant/chat', payload);
+  return sendRagMessage(payload);
 }
 
 // Profile
