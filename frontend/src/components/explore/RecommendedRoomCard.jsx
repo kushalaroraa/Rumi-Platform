@@ -1,17 +1,11 @@
 import React from 'react';
-import { API_BASE_URL } from '../../services/api';
+import { API_BASE_URL, normalizeImageUrl } from '../../services/api';
 export const RecommendedRoomCard = ({
   room,
   onViewDetails
 }) => {
   const rawCover = room?.coverUrl || room?.photoUrls?.[0] || 'https://images.unsplash.com/photo-1496307653780-42ee777d4833?w=200&h=200&fit=crop';
-  const cover = (() => {
-    const s = String(rawCover || '');
-    if (!s) return rawCover;
-    if (s.startsWith('http://') || s.startsWith('https://')) return s;
-    if (s.startsWith('/')) return `${API_BASE_URL}${s}`;
-    return s;
-  })();
+  const cover = normalizeImageUrl(rawCover);
   const locationLabel = room?.location?.area || room?.location?.city || room?.location?.address || 'Location';
   const score = Number(room?.compatibility ?? room?.matchScore ?? room?.score ?? 0) || 0;
   const tags = Array.isArray(room?.tags) ? room.tags : [];

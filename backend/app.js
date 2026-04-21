@@ -42,6 +42,10 @@ app.use('/user', userRoutes);
 const ragRoutes = require('./routes/ragRoutes');
 app.use('/api/rag', ragRoutes);
 
+// Cloudinary upload routes
+const uploadRoutes = require('./routes/uploadRoutes');
+app.use('/api/upload', uploadRoutes);
+
 // Example admin-only route to verify role-based access
 const { authenticate, authorize } = require('./middleware/authMiddleware');
 app.get('/api/admin', authenticate, authorize(['admin']), (req, res) => {

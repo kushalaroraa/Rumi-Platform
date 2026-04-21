@@ -4,6 +4,15 @@ export const API_BASE_URL = import.meta.env.VITE_API_URL
     ? import.meta.env.VITE_API_URL
     : `${window.location.origin}${import.meta.env.VITE_API_URL}`
   : 'http://localhost:9090';
+
+export const normalizeImageUrl = (src) => {
+  if (!src) return 'https://ui-avatars.com/api/?name=User&background=random'; // Safe dynamic placeholder
+  const str = String(src);
+  if (str.startsWith('http://') || str.startsWith('https://')) return str;
+  if (str.startsWith('/')) return `${API_BASE_URL}${str}`;
+  return `${API_BASE_URL}/${str}`;
+};
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -86,8 +95,8 @@ export async function getProfile() {
 }
 export async function uploadProfilePhoto(file) {
   const form = new FormData();
-  form.append('photo', file);
-  return api.post('/user/profile/photo', form, {
+  form.append('photo', file); // Updated field name to match backend
+  return api.post('/api/upload/profile-photo', form, {
     headers: {
       'Content-Type': 'multipart/form-data'
     }
