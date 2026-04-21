@@ -4,8 +4,10 @@ const { getAssistantReply } = require("./services/geminiService");
 
 const app = express();
 
+const clientUrl = (process.env.CLIENT_URL || '').replace(/\/$/, '');
 const allowedOrigins = [
-  process.env.CLIENT_URL,
+  clientUrl,
+  "https://rumi-platform.vercel.app",
   "http://localhost:5173", // Vite default
   "http://localhost:3000"  // CRA default
 ].filter(Boolean);
@@ -14,10 +16,12 @@ app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
+    
     if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
       callback(null, true);
     } else {
-      callback(new Error("Not allowed by CORS"));
+      // Use standard falsy response instead of an error to prevent preflight crashes
+      callback(null, false);
     }
   },
   credentials: true
