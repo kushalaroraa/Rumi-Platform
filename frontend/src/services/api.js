@@ -1,9 +1,5 @@
 import axios from 'axios';
-export const API_BASE_URL = import.meta.env.VITE_API_URL
-  ? import.meta.env.VITE_API_URL.startsWith('http')
-    ? import.meta.env.VITE_API_URL
-    : `${window.location.origin}${import.meta.env.VITE_API_URL}`
-  : 'http://localhost:9090';
+export const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.MODE === 'development' ? 'http://localhost:9090' : '');
 
 export const normalizeImageUrl = (src) => {
   if (!src) return 'https://ui-avatars.com/api/?name=User&background=random'; // Safe dynamic placeholder
@@ -15,6 +11,7 @@ export const normalizeImageUrl = (src) => {
 
 const api = axios.create({
   baseURL: API_BASE_URL,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json'
   }
@@ -25,34 +22,34 @@ api.interceptors.request.use(config => {
   return config;
 });
 export async function getMatches(params) {
-  return api.get('/matches', {
+  return api.get('/api/matches', {
     params
   });
 }
 export async function getReceivedRequests() {
-  return api.get('/request/received');
+  return api.get('/api/request/received');
 }
 export async function getReceivedAcceptedRequests() {
-  return api.get('/request/received/accepted');
+  return api.get('/api/request/received/accepted');
 }
 export async function getSentRequests() {
-  return api.get('/request/sent');
+  return api.get('/api/request/sent');
 }
 export async function sendRequest(toUserId) {
-  return api.post('/request/send', {
+  return api.post('/api/request/send', {
     toUserId
   });
 }
 export async function passRequest(toUserId) {
-  return api.post('/request/pass', {
+  return api.post('/api/request/pass', {
     toUserId
   });
 }
 export async function acceptRequest(data) {
-  return api.post('/request/accept', data);
+  return api.post('/api/request/accept', data);
 }
 export async function rejectRequest(data) {
-  return api.post('/request/reject', data);
+  return api.post('/api/request/reject', data);
 }
 
 // Auth
@@ -143,14 +140,14 @@ export async function incrementRoomView(roomId) {
   return api.post(`/api/rooms/${roomId}/view`);
 }
 export async function getRoomReceivedRequests(roomId) {
-  return api.get('/request/received', {
+  return api.get('/api/request/received', {
     params: {
       roomId
     }
   });
 }
 export async function getRoomReceivedAcceptedRequests(roomId) {
-  return api.get('/request/received/accepted', {
+  return api.get('/api/request/received/accepted', {
     params: {
       roomId
     }
@@ -181,7 +178,7 @@ export async function getRoomSuggestions(roomId, limit = 10) {
 
 // Invite to Connect (room-scoped request)
 export async function inviteToConnect(toUserId, roomId) {
-  return api.post('/request/send', {
+  return api.post('/api/request/send', {
     toUserId,
     roomId
   });

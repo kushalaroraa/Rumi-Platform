@@ -41,6 +41,11 @@ export const Dashboard = ({
   const explorePromptShownRef = useRef(false);
   const [roomDetailsOpen, setRoomDetailsOpen] = useState(false);
   const [roomDetailsRoom, setRoomDetailsRoom] = useState(null);
+  
+  // Swipe & Animation state
+  const [isLocked, setIsLocked] = useState(false);
+  const [animatingId, setAnimatingId] = useState(null);
+  const [swipeDirection, setSwipeDirection] = useState(null);
 
   const avgMatchScore = useMemo(() => {
     if (!swipeCards.length) return 0;
@@ -87,13 +92,36 @@ export const Dashboard = ({
     }
     setLoading(true);
     try {
-      const [matchesRes, receivedRes, sentRes, receivedAcceptedRes] = await Promise.all([getMatches({
-        limit: 20
-      }), getReceivedRequests(), getSentRequests(), getReceivedAcceptedRequests()]);
+      // Use individual try-catch or settled promises to prevent one failure from breaking everything
+      const matchesPromise = getMatches({ limit: 20 }).catch(e => {
+        console.error('getMatches error', e);
+        return { data: { matches: [] } };
+      });
+      const receivedPromise = getReceivedRequests().catch(e => {
+        console.error('getReceivedRequests error', e);
+        return { data: { requests: [] } };
+      });
+      const sentPromise = getSentRequests().catch(e => {
+        console.error('getSentRequests error', e);
+        return { data: { requests: [] } };
+      });
+      const receivedAcceptedPromise = getReceivedAcceptedRequests().catch(e => {
+        console.error('getReceivedAcceptedRequests error', e);
+        return { data: { requests: [] } };
+      });
+
+      const [matchesRes, receivedRes, sentRes, receivedAcceptedRes] = await Promise.all([
+        matchesPromise,
+        receivedPromise,
+        sentPromise,
+        receivedAcceptedPromise
+      ]);
+
       const matches = matchesRes?.data?.matches || [];
       const received = receivedRes?.data?.requests || [];
       const sent = sentRes?.data?.requests || [];
       const receivedAccepted = receivedAcceptedRes?.data?.requests || [];
+
       const mappedSwipe = matches.map(m => {
         const u = m.user || m;
         const budgetDisplay = budgetToDisplay(u?.budgetRange);
@@ -114,25 +142,27 @@ export const Dashboard = ({
           budget: budgetDisplay
         };
       });
+
       const mappedReceived = received.map(r => {
         const u = r.fromUserId || {};
         return {
           id: r._id,
           name: u.name,
           age: u.age ?? '',
-          image: u.photo || u.profilePicture || 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop',
+          image: normalizeImageUrl(u.photo || u.profilePicture),
           match: r.matchScore ?? r.match ?? 0,
           userId: u._id,
           requestId: r._id
         };
       });
+
       const mappedSent = sent.map(r => {
         const u = r.toUserId || {};
         return {
           id: r._id,
           name: u.name,
           age: u.age ?? '',
-          image: u.photo || u.profilePicture || 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop',
+          image: normalizeImageUrl(u.photo || u.profilePicture),
           match: r.matchScore ?? r.match ?? 0,
           status: r.status,
           userId: u._id,
@@ -140,7 +170,6 @@ export const Dashboard = ({
         };
       });
 
-      // Active matches = accepted connections regardless of direction
       const activeMap = new Map();
       mappedSent.filter(r => r.status === 'accepted').forEach(r => activeMap.set(r.userId, r));
       receivedAccepted.forEach(r => {
@@ -149,22 +178,17 @@ export const Dashboard = ({
           id: r._id,
           name: u.name,
           match: r.matchScore ?? r.match ?? 0,
-          image: u.photo || u.profilePicture || 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&h=200&fit=crop',
+          image: normalizeImageUrl(u.photo || u.profilePicture),
           userId: u._id
         });
       });
+
       setSwipeCards(mappedSwipe);
       setRequestsReceived(mappedReceived);
       setSentRequests(mappedSent);
       setActiveMatches(Array.from(activeMap.values()));
     } catch (e) {
-      // Keep UI stable; just show empty cards.
-      setSwipeCards([]);
-      setRequestsReceived([]);
-      setSentRequests([]);
-      setActiveMatches([]);
-      // eslint-disable-next-line no-console
-      console.error('reloadDashboard error', e);
+      console.error('reloadDashboard critical error', e);
     } finally {
       setLoading(false);
     }
@@ -284,21 +308,35 @@ export const Dashboard = ({
   }, [activeNav, chatWithUserId]);
   const handleSwipe = async direction => {
     const top = swipeCards[0];
-    if (!top || sending) return;
-    setSending(true);
+    if (!top || isLocked) return;
+
+    // 1. Lock and trigger animation immediately
+    setIsLocked(true);
+    setAnimatingId(top.id);
+    setSwipeDirection(direction);
+
+    // 2. Start backend sync independently
     try {
       if (direction === 'left') {
-        await passRequest(top.userId);
+        passRequest(top.userId).catch(e => console.error('passRequest error', e));
       } else {
-        await sendRequest(top.userId);
+        sendRequest(top.userId).catch(e => console.error('sendRequest error', e));
       }
-      await reloadDashboard();
     } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('handleSwipe error', e);
-    } finally {
-      setSending(false);
+      console.error('handleSwipe backend start error', e);
     }
+
+    // 3. Wait for animation to finish before updating state
+    setTimeout(() => {
+      setSwipeCards(prev => prev.filter(c => c.id !== top.id));
+      // Reset animation keys
+      setAnimatingId(null);
+      setSwipeDirection(null);
+      setIsLocked(false);
+      
+      // Optional: background re-sync
+      reloadDashboard();
+    }, 300); // matches duration: 0.3
   };
   const quickActions = [{
     icon: MessageCircle,
@@ -432,10 +470,13 @@ export const Dashboard = ({
                     scale: 1 - index * 0.05,
                     y: index * 10,
                     opacity: 1 - index * 0.3
-                  }} exit={{
-                    x: 1000,
+                  }} exit={animatingId === card.id ? {
+                    x: swipeDirection === 'left' ? -1000 : 1000,
                     opacity: 0,
-                    rotate: 45
+                    rotate: swipeDirection === 'left' ? -20 : 20
+                  } : {
+                    opacity: 0,
+                    scale: 0.9 // Subtle fade-out for non-swiped cards during reload
                   }} transition={{
                     duration: 0.3
                   }}>
@@ -495,10 +536,10 @@ export const Dashboard = ({
 
               {/* Action Buttons */}
               {(!isExploreLocked || revealExploreMatches) && !showExploreProfileModal && swipeCards.length > 0 && <div className="flex items-center justify-center gap-6 mt-8">
-                <button onClick={() => handleSwipe('left')} disabled={sending || loading} className="w-16 h-16 bg-red-50 hover:bg-red-100 rounded-full flex items-center justify-center text-red-500 transition-all hover:scale-110 shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
+                <button onClick={() => handleSwipe('left')} disabled={isLocked || loading} className="w-16 h-16 bg-red-50 hover:bg-red-100 rounded-full flex items-center justify-center text-red-500 transition-all hover:scale-110 shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
                   <X size={32} strokeWidth={2.5} />
                 </button>
-                <button onClick={() => handleSwipe('right')} disabled={sending || loading} className="w-16 h-16 bg-emerald-50 hover:bg-emerald-100 rounded-full flex items-center justify-center text-emerald-500 transition-all hover:scale-110 shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
+                <button onClick={() => handleSwipe('right')} disabled={isLocked || loading} className="w-16 h-16 bg-emerald-50 hover:bg-emerald-100 rounded-full flex items-center justify-center text-emerald-500 transition-all hover:scale-110 shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
                   <Heart size={32} strokeWidth={2.5} />
                 </button>
               </div>}
