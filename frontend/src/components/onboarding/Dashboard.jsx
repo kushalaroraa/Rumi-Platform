@@ -11,6 +11,7 @@ import { Sidebar } from '../layout/Sidebar';
 import UserProfile from '../../pages/UserProfile';
 import SettingsPage from '../../pages/Settings';
 import MessageWidget from '../../pages/MessageWidget';
+import { Avatar } from '../common/Avatar';
 
 export const Dashboard = ({
   onLogout,
@@ -397,7 +398,7 @@ export const Dashboard = ({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="w-10 h-10 rounded-full overflow-hidden focus:outline-none">
-                  <img src={avatarSrc || "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=100&q=80"} alt="Profile" className="w-full h-full object-cover" />
+                  <Avatar src={avatarSrc} alt="Profile" className="w-full h-full" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-72 bg-white text-gray-900 border border-gray-200 rounded-xl shadow-lg p-1 z-[100]">
@@ -483,7 +484,7 @@ export const Dashboard = ({
                     <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-gray-100">
                       {/* Profile Image */}
                       <div className="relative h-80">
-                        <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
+                        <Avatar src={card.image} alt={card.name} className="w-full h-full" />
                         {/* Match Badge */}
                         <div className="absolute top-4 right-4 bg-emerald-500 text-white px-4 py-2 rounded-full font-semibold text-sm shadow-lg">
                           {card.match}% Match
@@ -570,7 +571,7 @@ export const Dashboard = ({
               <div className="space-y-4">
                 {requestsReceived.map(request => <div key={request.id} className="space-y-3">
                   <div className="flex items-center gap-3">
-                    <img src={request.image} alt={request.name} className="w-12 h-12 rounded-full object-cover" />
+                    <Avatar src={request.image} alt={request.name} className="w-12 h-12 rounded-full" />
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-gray-900 text-sm">
                         {request.name}, {request.age}
@@ -620,7 +621,7 @@ export const Dashboard = ({
               </h3>
               <div className="space-y-3">
                 {sentRequests.map(request => <div key={request.id} className="flex items-center gap-3">
-                  <img src={request.image} alt={request.name} className="w-10 h-10 rounded-full object-cover" />
+                  <Avatar src={request.image} alt={request.name} className="w-10 h-10 rounded-full" />
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-gray-900 text-sm truncate">
                       {request.name}, {request.age}
@@ -645,7 +646,7 @@ export const Dashboard = ({
               </h3>
               <div className="space-y-3">
                 {activeMatches.map(match => <div key={match.id} className="flex items-center gap-3">
-                  <img src={match.image} alt={match.name} className="w-10 h-10 rounded-full object-cover" />
+                  <Avatar src={match.image} alt={match.name} className="w-10 h-10 rounded-full" />
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-gray-900 text-sm truncate">
                       {match.name}
