@@ -2,11 +2,18 @@ require("./config/env");
 const express = require("express");
 const cors = require("cors");
 const { getAssistantReply } = require("./services/geminiService");
+const passport = require("./config/passport");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use(passport.initialize());
+
+// Serve uploaded files (profile photos) from /uploads
+const path = require('path');
+const uploadsPath = path.join(__dirname, 'uploads');
+app.use('/uploads', express.static(uploadsPath));
 
 // Test route
 app.get("/", (req, res) => {
@@ -29,7 +36,18 @@ app.post("/assistant/chat", async (req, res) => {
 
 // Mount API routes
 const authRoutes = require('./routes/authRoutes');
-app.use('/auth', authRoutes); // match frontend /auth/register and /auth/login
+
+
+app.use('/api/auth', authRoutes);
+app.use('/auth', authRoutes);
+
+// User profile routes
+const userRoutes = require('./routes/userRoutes');
+app.use('/user', userRoutes);
+
+// RAG chatbot routes
+const ragRoutes = require('./routes/ragRoutes');
+app.use('/api/rag', ragRoutes);
 
 // Example admin-only route to verify role-based access
 const { authenticate, authorize } = require('./middleware/authMiddleware');

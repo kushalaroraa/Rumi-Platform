@@ -4,6 +4,12 @@ export const API_BASE_URL = import.meta.env.VITE_API_URL
     ? import.meta.env.VITE_API_URL
     : `${window.location.origin}${import.meta.env.VITE_API_URL}`
   : 'http://localhost:9090';
+export function getGoogleAuthUrl() {
+  const baseUrl = API_BASE_URL.replace(/\/$/, '');
+  return baseUrl.endsWith('/api')
+    ? `${baseUrl}/auth/google`
+    : `${baseUrl}/api/auth/google`;
+}
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {

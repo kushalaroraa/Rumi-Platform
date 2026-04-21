@@ -1,6 +1,11 @@
 require("./config/env");
 require('dotenv').config();
 const { logGeminiKeyStatus } = require("./config/env");
+const path = require("path");
+const dotenv = require("dotenv");
+
+
+dotenv.config({ path: path.join(__dirname, ".env") });
 
 const app = require("./app");
 const connectDB = require("./config/db");

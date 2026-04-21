@@ -1634,6 +1634,25 @@ export default function App() {
     }
   });
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthToken = params.get('token');
+    const oauthError = params.get('error');
+
+    if (window.location.pathname === '/login-success') {
+      window.history.replaceState({}, document.title, '/');
+    }
+
+    if (oauthError) {
+      localStorage.removeItem('rumi_token');
+      localStorage.removeItem('rumi_user');
+      setCurrentView('signin');
+      return;
+    }
+
+    if (oauthToken) {
+      localStorage.setItem('rumi_token', oauthToken);
+    }
+
     const token = localStorage.getItem('rumi_token');
     if (!token) return;
 
@@ -1643,6 +1662,8 @@ export default function App() {
         const res = await getProfile();
         const user = res?.data?.user;
         if (!user) throw new Error('Missing profile');
+        localStorage.setItem('rumi_user', JSON.stringify(user));
+        setSignupEmail(user?.email ?? '');
         const shouldShowDashboard = user?.profileCompleted || user?.intent === 'explore';
         if (shouldShowDashboard) setCurrentView('dashboard');else setCurrentView('profile');
       } catch (e) {
