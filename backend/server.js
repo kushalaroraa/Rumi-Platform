@@ -34,7 +34,11 @@ const PORT = process.env.PORT || 9090;
 connectDB();
 
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-  console.log(`Assistant: POST http://localhost:${PORT}/assistant/chat`);
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`Server is running on port ${PORT}`);
+    console.log(`Local Assistant URL: http://localhost:${PORT}/assistant/chat`);
+  } else {
+    console.log(`Server is running on port ${PORT}`);
+  }
   logGeminiKeyStatus();
 });

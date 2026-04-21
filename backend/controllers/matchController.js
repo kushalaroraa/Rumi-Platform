@@ -1,0 +1,118 @@
+const User = require('../models/User');
+const { Request } = require('../models/Request');
+const { calculateMatch } = require('../services/matchingService');
+const { getCompatibilityExplanation } = require('../services/geminiService');
+
+/**
+ * GET /matches
+ * Returns compatible users sorted by match percentage (auth required).
+ * Excludes blocked users and already accepted/pending requests.
+ */
+async function getMatches(req, res) {
+    try {
+        const userId = req.userId;
+        const user = await User.findById(userId);
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+
+        const blocked = user.blockedUsers || [];
+        const allOthers = await User.find({
+            _id: { $nin: [userId, ...blocked] },
+            profileCompleted: true,
+        }).select('-passwordHash -otpCode -otpExpiresAt');
+
+        // For explore/matches we only consider legacy user-to-user requests
+        // (i.e. requests without a roomId).
+        const acceptedOrPending = await Request.find({
+            $and: [
+                { $or: [{ fromUserId: userId }, { toUserId: userId }] },
+                { status: { $in: ['accepted', 'pending', 'rejected'] } },
+                { $or: [{ roomId: null }, { roomId: { $exists: false } }] },
+            ],
+        }).select('fromUserId toUserId').lean();
+        const acceptedOrPendingWith = new Set([userId.toString()]);
+        for (const r of acceptedOrPending) {
+            acceptedOrPendingWith.add(r.fromUserId?.toString());
+            acceptedOrPendingWith.add(r.toUserId?.toString());
+        }
+
+        const candidates = allOthers.filter(
+            (u) => !acceptedOrPendingWith.has(u._id.toString())
+        );
+
+        const results = candidates.map((other) => {
+            const { matchScore, reasons } = calculateMatch(user, other);
+            const u = other.toObject();
+            const budgetRange = u.budgetRange || {};
+            const budgetStr = [budgetRange.min, budgetRange.max].every((n) => n != null && n > 0)
+                ? `${budgetRange.min}-${budgetRange.max}`
+                : null;
+            return {
+                user: u,
+                matchScore,
+                compatibility: matchScore,
+                reasons,
+                name: u.name,
+                city: u.city || u.location?.city || '',
+                budget: budgetStr,
+            };
+        });
+
+        results.sort((a, b) => b.matchScore - a.matchScore);
+        const limit = Math.min(parseInt(req.query.limit, 10) || 20, 20);
+        const list = results.slice(0, limit);
+
+        return res.json({
+            success: true,
+            matches: list,
+        });
+    } catch (err) {
+        console.error('getMatches error:', err);
+        return res.status(500).json({ success: false, message: err.message || 'Server error.' });
+    }
+}
+
+/**
+ * GET /matches/explain?userId=...
+ * Returns match score + Gemini compatibility explanation for the current user and target user.
+ */
+async function getMatchExplain(req, res) {
+    try {
+        const userId = req.userId;
+        const targetId = req.query.userId;
+        if (!targetId) {
+            return res.status(400).json({ success: false, message: 'userId query required.' });
+        }
+
+        const [user, target] = await Promise.all([
+            User.findById(userId).select('-passwordHash -otpCode -otpExpiresAt'),
+            User.findById(targetId).select('-passwordHash -otpCode -otpExpiresAt'),
+        ]);
+        if (!user || !target) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+
+        const matchResult = calculateMatch(user, target);
+        const compatibilityExplanation = await getCompatibilityExplanation(
+            user.toObject(),
+            target.toObject(),
+            matchResult
+        );
+
+        return res.json({
+            success: true,
+            matchScore: matchResult.matchScore,
+            reasons: matchResult.reasons,
+            compatibilityExplanation: compatibilityExplanation || undefined,
+        });
+    } catch (err) {
+        console.error('getMatchExplain error:', err);
+        return res.status(500).json({ success: false, message: err.message || 'Server error.' });
+    }
+}
+
+module.exports = {
+    getMatches,
+    getMatchExplain
+};

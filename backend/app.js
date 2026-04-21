@@ -4,7 +4,24 @@ const { getAssistantReply } = require("./services/geminiService");
 
 const app = express();
 
-app.use(cors());
+const allowedOrigins = [
+  process.env.CLIENT_URL,
+  "http://localhost:5173", // Vite default
+  "http://localhost:3000"  // CRA default
+].filter(Boolean);
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true
+}));
 app.use(express.json());
 
 // Serve uploaded files (profile photos) from /uploads
@@ -45,6 +62,12 @@ app.use('/api/rag', ragRoutes);
 // Room management routes
 const roomRoutes = require('./routes/roomRoutes');
 app.use('/api/rooms', roomRoutes);
+
+// Match and request routes
+const requestRoutes = require('./routes/requestRoutes');
+const matchRoutes = require('./routes/matchRoutes');
+app.use('/api/request', requestRoutes);
+app.use('/api/matches', matchRoutes);
 
 // Cloudinary upload routes
 const uploadRoutes = require('./routes/uploadRoutes');
