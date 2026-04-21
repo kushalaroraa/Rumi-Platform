@@ -9,7 +9,7 @@ import { VerificationSuccessScreen } from './components/onboarding/VerificationS
 import { ProfileSetupFlow } from './components/onboarding/ProfileSetupFlow';
 import { FinalConfirmationScreen } from './components/onboarding/FinalConfirmationScreen';
 import { Dashboard } from './components/onboarding/Dashboard';
-import { getProfile, sendAssistantMessage } from './services/api';
+import { getProfile, sendRagMessage } from './services/api';
 
 // Font injection for Poppins
 
@@ -1176,14 +1176,20 @@ const Chatbot = () => {
   const [inputMessage, setInputMessage] = useState('');
   const [isAssistantTyping, setIsAssistantTyping] = useState(false);
   const callAssistant = async (nextMessages, typingMessageId) => {
-    const apiMessages = nextMessages.filter(m => m.sender === 'user' || m.sender === 'bot').map(m => ({
-      role: m.sender === 'user' ? 'user' : 'assistant',
-      text: m.text
-    }));
-    const res = await sendAssistantMessage({
-      messages: apiMessages
+    // Get the last message from the user
+    const lastUserMessage = [...nextMessages].reverse().find(m => m.sender === 'user')?.text || '';
+    
+    // Debug logging
+    console.log("Sending query:", lastUserMessage);
+
+    const res = await sendRagMessage({
+      message: lastUserMessage
     });
-    const reply = res?.data?.reply ?? '';
+
+    // Debug logging response
+    console.log("Response:", res.data);
+
+    const reply = res?.data?.reply ?? ''; //safely extract reply
     setMessages(prev => [...prev.filter(m => m.id !== typingMessageId), {
       id: typingMessageId,
       text: reply || 'Okay — tell me a bit more.',

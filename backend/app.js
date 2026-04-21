@@ -1,8 +1,7 @@
-require("./config/env");
 const express = require("express");
 const cors = require("cors");
-const { getAssistantReply } = require("./services/geminiService");
 const passport = require("./config/passport");
+const { getAssistantReply } = require("./services/geminiService");
 
 const app = express();
 
@@ -11,9 +10,9 @@ app.use(express.json());
 app.use(passport.initialize());
 
 // Serve uploaded files (profile photos) from /uploads
-const path = require('path');
-const uploadsPath = path.join(__dirname, 'uploads');
-app.use('/uploads', express.static(uploadsPath));
+const path = require("path");
+const uploadsPath = path.join(__dirname, "uploads");
+app.use("/uploads", express.static(uploadsPath));
 
 // Test route
 app.get("/", (req, res) => {
@@ -28,31 +27,33 @@ app.post("/assistant/chat", async (req, res) => {
   } catch (err) {
     console.error("assistant/chat:", err);
     res.status(500).json({
-      reply: "Sorry — something went wrong. Please try again.",
+      reply: "Sorry -- something went wrong. Please try again.",
       error: err.message,
     });
   }
 });
 
 // Mount API routes
-const authRoutes = require('./routes/authRoutes');
+const authRoutes = require("./routes/authRoutes");
+app.use("/api/auth", authRoutes);
+app.use("/auth", authRoutes);
 
-
-app.use('/api/auth', authRoutes);
-app.use('/auth', authRoutes);
-
-// User profile routes
-const userRoutes = require('./routes/userRoutes');
-app.use('/user', userRoutes);
+// User profile routes (no /api prefix because frontend calls /user/... )
+const userRoutes = require("./routes/userRoutes");
+app.use("/user", userRoutes);
 
 // RAG chatbot routes
-const ragRoutes = require('./routes/ragRoutes');
-app.use('/api/rag', ragRoutes);
+const ragRoutes = require("./routes/ragRoutes");
+app.use("/api/rag", ragRoutes);
+
+// Cloudinary upload routes
+const uploadRoutes = require("./routes/uploadRoutes");
+app.use("/api/upload", uploadRoutes);
 
 // Example admin-only route to verify role-based access
-const { authenticate, authorize } = require('./middleware/authMiddleware');
-app.get('/api/admin', authenticate, authorize(['admin']), (req, res) => {
-  res.json({ success: true, message: `Hello Admin ${req.user.name || ''}` });
+const { authenticate, authorize } = require("./middleware/authMiddleware");
+app.get("/api/admin", authenticate, authorize(["admin"]), (req, res) => {
+  res.json({ success: true, message: `Hello Admin ${req.user.name || ""}` });
 });
 
 module.exports = app;

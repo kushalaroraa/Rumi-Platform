@@ -1,7 +1,7 @@
 const User = require("../models/User");
 const bcrypt = require("bcryptjs");
 const { signToken } = require("../middleware/authMiddleware");
-const SALT_ROUNDS = 10;
+const SALT_ROUNDS = 10; //controls how strong the hash is -standard is 10
 
 exports.registerUser = async (req, res) => {
     try {
@@ -24,7 +24,7 @@ exports.registerUser = async (req, res) => {
     const existing = await User.findOne({ email: email.trim().toLowerCase() });
     if (existing) {
       return res.status(409).json({ success: false, message: 'Email already registered.' });
-    }
+    } //409- conflict
 
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
@@ -35,12 +35,12 @@ exports.registerUser = async (req, res) => {
       phone: phone?.trim() || '',
     });
 
-    const token = signToken({
+    const token = signToken({ //Generating JWT token
         userId: user._id,
         role: user.role
     });
     const safe = user.toObject();
-    delete safe.passwordHash;
+    delete safe.passwordHash;  //to remove sensitive data
     
     return res.status(201).json({
       success: true,
@@ -50,6 +50,10 @@ exports.registerUser = async (req, res) => {
     });
   } catch (err) {
     console.error('register error:', err);
+    const msg = String(err?.message || '');
+    if (msg.includes('before initial connection is complete')) {
+      return res.status(503).json({ success: false, message: 'Database is temporarily unavailable. Please try again in a moment.' });
+    }
     return res.status(500).json({ success: false, message: err.message || 'Server error.' });
   }
 }
@@ -57,6 +61,7 @@ exports.registerUser = async (req, res) => {
 exports.loginUser = async (req, res) => {
     try {
     const { email, password } = req.body || {};
+    //to prevent empty requests
     if (!email?.trim() || !password) {
       return res.status(400).json({ success: false, message: 'Email and password required.' });
     }
@@ -64,7 +69,7 @@ exports.loginUser = async (req, res) => {
     const user = await User.findOne({ email: email.trim().toLowerCase() });
     if (!user) {
       return res.status(401).json({ success: false, message: 'Invalid email or password.' });
-    }
+    } //401- unauthorized 
     if (!user.passwordHash) {
       return res.status(401).json({ success: false, message: 'Invalid email or password.' });
     }
@@ -74,7 +79,7 @@ exports.loginUser = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid email or password.' });
     }
 
-    const token = signToken({
+    const token = signToken({ //generating JWT token
         userId: user._id,
         role: user.role
     });
@@ -83,11 +88,15 @@ exports.loginUser = async (req, res) => {
 
     return res.json({
       success: true,
-      token,
+      token,    //returning token to frontend for future requests
       user: safe,
     });
   } catch (err) {
     console.error('login error:', err);
+    const msg = String(err?.message || '');
+    if (msg.includes('before initial connection is complete')) {
+      return res.status(503).json({ success: false, message: 'Database is temporarily unavailable. Please try again in a moment.' });
+    }
     return res.status(500).json({ success: false, message: err.message || 'Server error.' });
   }
 }

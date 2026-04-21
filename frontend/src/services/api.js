@@ -4,12 +4,22 @@ export const API_BASE_URL = import.meta.env.VITE_API_URL
     ? import.meta.env.VITE_API_URL
     : `${window.location.origin}${import.meta.env.VITE_API_URL}`
   : 'http://localhost:9090';
+
 export function getGoogleAuthUrl() {
   const baseUrl = API_BASE_URL.replace(/\/$/, '');
   return baseUrl.endsWith('/api')
     ? `${baseUrl}/auth/google`
     : `${baseUrl}/api/auth/google`;
 }
+
+export const normalizeImageUrl = (src) => {
+  if (!src) return 'https://ui-avatars.com/api/?name=User&background=random'; // Safe dynamic placeholder
+  const str = String(src);
+  if (str.startsWith('http://') || str.startsWith('https://')) return str;
+  if (str.startsWith('/')) return `${API_BASE_URL}${str}`;
+  return `${API_BASE_URL}/${str}`;
+};
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -54,16 +64,16 @@ export async function rejectRequest(data) {
 
 // Auth
 export async function register(data) {
-  return api.post('/auth/register', data);
+  return api.post('/api/auth/register', data);
 }
 export async function login(data) {
-  return api.post('/auth/login', data);
+  return api.post('/api/auth/login', data);
 }
 export async function sendOtp(data) {
-  return api.post('/auth/otp/send', data);
+  return api.post('/api/auth/otp/send', data);
 }
 export async function verifyOtp(data) {
-  return api.post('/auth/otp/verify', data);
+  return api.post('/api/auth/otp/verify', data);
 }
 export async function getChatHistory(otherUserId) {
   return api.get('/chat/history', {
@@ -73,9 +83,14 @@ export async function getChatHistory(otherUserId) {
   });
 }
 
-// Assistant (Gemini)
+// Assistant (Gemini RAG)
+export async function sendRagMessage(payload) { //The payload contains the user query in the format { message: string }
+  return api.post('/api/rag/chat', payload);
+}
+
+// Backwards-compatible alias for older callers
 export async function sendAssistantMessage(payload) {
-  return api.post('/assistant/chat', payload);
+  return sendRagMessage(payload);
 }
 
 // Profile
@@ -87,8 +102,8 @@ export async function getProfile() {
 }
 export async function uploadProfilePhoto(file) {
   const form = new FormData();
-  form.append('photo', file);
-  return api.post('/user/profile/photo', form, {
+  form.append('photo', file); // Updated field name to match backend
+  return api.post('/api/upload/profile-photo', form, {
     headers: {
       'Content-Type': 'multipart/form-data'
     }
