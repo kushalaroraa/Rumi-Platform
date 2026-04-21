@@ -105,14 +105,14 @@ export async function uploadProfilePhoto(file) {
 
 // Rooms (Offer a Room / Just Exploring)
 export async function createRoom(form) {
-  return api.post('/rooms', form, {
+  return api.post('/api/rooms', form, {
     headers: {
       'Content-Type': 'multipart/form-data'
     }
   });
 }
 export async function getRecommendedRooms(limit = 5) {
-  return api.get('/rooms/recommended', {
+  return api.get('/api/rooms/recommended', {
     params: {
       limit
     }
@@ -122,25 +122,25 @@ export async function getRecommendedRooms(limit = 5) {
 // --- Offer a Room (room owner dashboard) ---
 
 export async function getMyRooms() {
-  return api.get('/rooms/mine');
+  return api.get('/api/rooms/mine');
 }
 export async function updateRoomStatus(roomId, status) {
-  return api.patch(`/rooms/${roomId}/status`, {
+  return api.patch(`/api/rooms/${roomId}/status`, {
     status
   });
 }
 export async function updateRoom(roomId, form) {
-  return api.put(`/rooms/${roomId}`, form, {
+  return api.put(`/api/rooms/${roomId}`, form, {
     headers: {
       'Content-Type': 'multipart/form-data'
     }
   });
 }
 export async function deleteRoom(roomId) {
-  return api.delete(`/rooms/${roomId}`);
+  return api.delete(`/api/rooms/${roomId}`);
 }
 export async function incrementRoomView(roomId) {
-  return api.post(`/rooms/${roomId}/view`);
+  return api.post(`/api/rooms/${roomId}/view`);
 }
 export async function getRoomReceivedRequests(roomId) {
   return api.get('/request/received', {
@@ -172,7 +172,7 @@ export async function getChatHistoryWithRoom(otherUserId, roomId) {
   });
 }
 export async function getRoomSuggestions(roomId, limit = 10) {
-  return api.get(`/rooms/${roomId}/suggestions`, {
+  return api.get(`/api/rooms/${roomId}/suggestions`, {
     params: {
       limit
     }
