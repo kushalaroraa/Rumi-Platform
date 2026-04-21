@@ -11,6 +11,7 @@ import { SuggestedMatchCard } from './SuggestedMatchCard';
 import { Sidebar } from '../layout/Sidebar';
 import RoomProfile from '../../pages/RoomProfile';
 import SettingsPage from '../../pages/Settings';
+import { Avatar } from '../common/Avatar';
 
 export const OfferRoomDashboard = ({
   onLogout,
@@ -313,7 +314,7 @@ export const OfferRoomDashboard = ({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="w-10 h-10 rounded-full overflow-hidden focus:outline-none">
-                  <img src={avatarSrc || 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=100&q=80'} alt="Profile" className="w-full h-full object-cover" />
+                  <Avatar src={avatarSrc} alt="Profile" className="w-full h-full" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-72 bg-white text-gray-900 border border-gray-200 rounded-xl shadow-lg p-1 z-[100]">

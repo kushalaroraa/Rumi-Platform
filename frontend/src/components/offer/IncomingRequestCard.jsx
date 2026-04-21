@@ -1,4 +1,5 @@
 import React from 'react';
+import { Avatar } from '../common/Avatar';
 export const IncomingRequestCard = ({
   request,
   onAccept,
@@ -9,7 +10,7 @@ export const IncomingRequestCard = ({
   const avatar = u?.photo || u?.profilePicture || '';
   return <div className="border border-gray-100 rounded-2xl p-4 bg-white">
       <div className="flex items-start gap-3">
-        <img src={avatar || 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop'} alt={u?.name || 'User'} className="w-12 h-12 rounded-full object-cover bg-slate-100" />
+        <Avatar src={avatar} alt={u?.name || 'User'} className="w-12 h-12 rounded-full" />
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
