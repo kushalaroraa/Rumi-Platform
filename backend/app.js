@@ -42,6 +42,10 @@ app.use('/user', userRoutes);
 const ragRoutes = require('./routes/ragRoutes');
 app.use('/api/rag', ragRoutes);
 
+// Room management routes
+const roomRoutes = require('./routes/roomRoutes');
+app.use('/api/rooms', roomRoutes);
+
 // Cloudinary upload routes
 const uploadRoutes = require('./routes/uploadRoutes');
 app.use('/api/upload', uploadRoutes);

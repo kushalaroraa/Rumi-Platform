@@ -7,6 +7,11 @@ import { API_BASE_URL } from '../../services/api';
 import { RecommendedRoomsSection } from '../explore/RecommendedRoomsSection';
 import { RoomDetailsModal } from '../explore/RoomDetailsModal';
 import { OfferRoomDashboard } from '../offer/OfferRoomDashboard';
+import { Sidebar } from '../layout/Sidebar';
+import UserProfile from '../../pages/UserProfile';
+import SettingsPage from '../../pages/Settings';
+import MessageWidget from '../../pages/MessageWidget';
+
 export const Dashboard = ({
   onLogout,
   userEmail,
@@ -316,72 +321,20 @@ export const Dashboard = ({
   if (renderOfferDashboard) {
     return <OfferRoomDashboard onLogout={onLogout} userEmail={userEmail} onEditProfile={onEditProfile} />;
   }
-  return <div className="min-h-screen bg-gray-100 flex">
-    {/* Sidebar */}
-    <aside className="w-64 bg-white shadow-sm flex flex-col">
-      {/* Logo */}
-      <div className="p-6 flex items-center gap-2">
-        <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-          <Home size={18} className="text-white" />
-        </div>
-        <span className="text-xl font-semibold text-gray-900">Rumi</span>
-      </div>
+  const seekerNavItems = [
+    { id: 'dashboard', label: 'Discover Matches', icon: Home },
+    { id: 'messages', label: 'Messages', icon: MessageCircle },
+    { id: 'profile', label: 'Profile', icon: User },
+    { id: 'settings', label: 'Settings', icon: Settings },
+  ];
 
-      {/* Navigation */}
-      <nav className="flex-1 px-4 py-2">
-        <button onClick={() => setActiveNav('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-2 transition-colors ${activeNav === 'dashboard' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-          <Home size={20} />
-          <span>Dashboard</span>
-        </button>
-
-        <button onClick={() => setActiveNav('discover')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-2 transition-colors ${activeNav === 'discover' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-          <Search size={20} />
-          <span>Discover Matches</span>
-        </button>
-
-        <button onClick={() => setActiveNav('matches')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-2 transition-colors ${activeNav === 'matches' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-          <Heart size={20} />
-          <span>My Matches</span>
-        </button>
-
-        <button onClick={() => setActiveNav('messages')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-2 transition-colors ${activeNav === 'messages' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-          <MessageCircle size={20} />
-          <span>Messages</span>
-        </button>
-
-        <button onClick={() => setActiveNav('activity')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-2 transition-colors ${activeNav === 'activity' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-          <BarChart3 size={20} />
-          <span>Activity & Stats</span>
-        </button>
-
-        <button onClick={() => setActiveNav('profile')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-2 transition-colors ${activeNav === 'profile' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-          <User size={20} />
-          <span>Profile</span>
-        </button>
-
-        <button onClick={() => setActiveNav('settings')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-2 transition-colors ${activeNav === 'settings' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-          <Settings size={20} />
-          <span>Settings</span>
-        </button>
-      </nav>
-
-      {/* AI Assistant Card */}
-      <div className="mx-4 mb-4 p-4 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl text-white">
-        <div className="flex items-center gap-2 mb-2">
-          <Sparkles size={16} />
-          <span className="text-sm font-semibold">AI in action</span>
-        </div>
-        <p className="text-xs leading-relaxed opacity-90">
-          Find your perfect match! Explore and complete new matches with higher precision.
-        </p>
-      </div>
-
-      {/* Logout */}
-      <button onClick={onLogout} className="mx-4 mb-6 flex items-center gap-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-xl transition-colors">
-        <LogOut size={20} />
-        <span>Logout</span>
-      </button>
-    </aside>
+  return <div className="min-h-screen bg-gray-100 flex h-screen overflow-hidden">
+    <Sidebar
+      items={seekerNavItems}
+      activeNav={activeNav}
+      onNavChange={setActiveNav}
+      onLogout={onLogout}
+    />
 
     {/* Main Content */}
     <main className="flex-1 overflow-auto">
@@ -439,9 +392,12 @@ export const Dashboard = ({
           Logged in as <span className="font-semibold">{userEmail}</span>
         </div>}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main Column - Discover Matches (2/3 width) */}
+          {/* Main Column - Content switching (2/3 width) */}
           <div className="lg:col-span-2">
-            <div className="bg-white rounded-3xl p-8 shadow-sm">
+            {activeNav === 'profile' && <UserProfile />}
+            {activeNav === 'settings' && <SettingsPage />}
+
+            {activeNav === 'dashboard' && <div className="bg-white rounded-3xl p-8 shadow-sm">
               <div className="mb-6">
                 {isExploreLocked && !revealExploreMatches ? <>
                   <h2 className="text-2xl font-semibold text-gray-900 mb-1">
@@ -549,42 +505,20 @@ export const Dashboard = ({
 
               {/* Recommended Rooms */}
               <RecommendedRoomsSection rooms={recommendedRooms} loading={roomsLoading} title="Recommended Rooms" />
-            </div>
+            </div>}
           </div>
 
           {/* Right Column - Side Widgets */}
           <div className="space-y-6">
-            {/* Messages (activeTab) */}
-            {activeNav === 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
-              <div className="flex items-center justify-between gap-4 mb-4">
-                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-                  <MessageCircle size={20} className="text-blue-600" />
-                  Messages
-                </h3>
-                <button type="button" onClick={() => {
-                  setActiveNav('dashboard');
-                  setChatWithUserId(null);
-                  setChatMessages([]);
-                }} className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm transition-colors">
-                  Back
-                </button>
-              </div>
-
-              <div className="space-y-3 max-h-[320px] overflow-auto pr-2">
-                {chatLoading ? <p className="text-sm text-gray-500">Loading messages...</p> : chatWithUserId ? chatMessages.length ? chatMessages.map(m => <div key={m._id} className={`flex ${m.isOwn ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[80%] p-3 rounded-2xl text-sm ${m.isOwn ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-900'}`}>
-                    <div className="font-medium mb-1 text-xs opacity-90">
-                      {m.isOwn ? 'You' : m.senderId?.name || 'User'}
-                    </div>
-                    <div className="whitespace-pre-wrap">{m.message}</div>
-                  </div>
-                </div>) : <p className="text-sm text-gray-500">No messages yet.</p> : <p className="text-sm text-gray-500">Select an active match to view messages.</p>}
-              </div>
-
-              <div className="mt-4">
-                <input disabled value="Messaging sending is not enabled in this design build." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-500" />
-              </div>
-            </div>}
+            <MessageWidget
+              activeNav={activeNav}
+              setActiveNav={setActiveNav}
+              chatLoading={chatLoading}
+              chatWithUserId={chatWithUserId}
+              chatMessages={chatMessages}
+              setChatWithUserId={setChatWithUserId}
+              setChatMessages={setChatMessages}
+            />
 
             {/* Requests Received */}
             {activeNav !== 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
