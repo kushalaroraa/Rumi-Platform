@@ -1,8 +1,8 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useCallback } from 'react';
 import { AuthLayout } from './AuthLayout';
 import { User, MapPin, Camera, ArrowRight, Home, Search, Compass } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { getProfile, updateProfile, uploadProfilePhoto, createRoom } from '../../services/api';
+import { getProfile, updateProfile, uploadProfilePhoto, createRoom, normalizeImageUrl } from '../../services/api';
 export const ProfileSetupFlow = ({
   onComplete,
   mode = 'setup'
@@ -23,10 +23,55 @@ export const ProfileSetupFlow = ({
   const [photoPreview, setPhotoPreview] = useState('');
   const [photoFile, setPhotoFile] = useState(null);
   const fileInputRef = useRef(null);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [cloudinaryUrl, setCloudinaryUrl] = useState('');
+  
+  // Dedup ref to prevent re-uploading same file
+  const lastProcessedFileRef = useRef('');
+
   const trimmedName = fullName.trim();
   const nameParts = trimmedName ? trimmedName.split(/\s+/).filter(Boolean) : [];
   const ageNum = age === '' ? NaN : Number(age);
-  const isStep1Valid = nameParts.length >= 2 && Number.isFinite(ageNum) && ageNum >= 18 && ageNum <= 120 && (Boolean(photoFile) || Boolean(photoPreview));
+  const isStep1Valid = nameParts.length >= 2 && Number.isFinite(ageNum) && ageNum >= 18 && ageNum <= 120 && (Boolean(cloudinaryUrl) || Boolean(photoPreview));
+
+  // Stable upload handler
+  const handlePhotoUpload = useCallback(async (file) => {
+    if (!file || isUploadingPhoto) return;
+
+    // Deduplication check
+    const fileKey = `${file.name}-${file.size}`;
+    if (lastProcessedFileRef.current === fileKey) return;
+    
+    setFormError('');
+    setIsUploadingPhoto(true);
+    lastProcessedFileRef.current = fileKey;
+
+    // Timeout guard to prevent hanging UI
+    const timeoutId = setTimeout(() => {
+      if (isUploadingPhoto) {
+        setIsUploadingPhoto(false);
+        setFormError('Upload is taking too long. Please check your connection.');
+      }
+    }, 20000); // 20s timeout
+
+    try {
+      const uploadRes = await uploadProfilePhoto(file);
+      const url = uploadRes.data?.url || uploadRes.data?.secure_url;
+      
+      if (!url) throw new Error('No URL returned from upload');
+      
+      setCloudinaryUrl(url);
+      setPhotoPreview(url);
+    } catch (err) {
+      console.error('Upload error:', err);
+      // Reset dedup ref on error so user can retry same file
+      lastProcessedFileRef.current = '';
+      setFormError('Failed to upload image. Please try again.');
+    } finally {
+      clearTimeout(timeoutId);
+      setIsUploadingPhoto(false);
+    }
+  }, [isUploadingPhoto]);
 
   // Step 2 state (preferences used for compatibility scoring)
   const [budget, setBudget] = useState(1200);
@@ -123,11 +168,7 @@ export const ProfileSetupFlow = ({
     setFormError('');
     const trimmedName = fullName.trim();
     if (!isStep1Valid) {
-      setFormError('Please enter a valid name and age (18-120).');
-      return;
-    }
-    if (!location.trim()) {
-      setFormError('Location is required.');
+      setFormError('Please enter a valid name, age and profile photo.');
       return;
     }
     const ageNumLocal = Number(age);
@@ -135,9 +176,16 @@ export const ProfileSetupFlow = ({
       min: budgetMin,
       max: budgetMax
     } = mapBudgetRange(budget);
+    
     setSubmitting(true);
     try {
-      await updateProfile({
+      // Logic simplified: photo is already uploaded on selection!
+      if (!cloudinaryUrl && !photoPreview && mode === 'setup') {
+        setFormError('Please wait for the photo to finish uploading.');
+        setSubmitting(false);
+        return;
+      }
+      const profileData = {
         name: trimmedName,
         age: ageNumLocal,
         gender: mapGender(gender),
@@ -158,14 +206,17 @@ export const ProfileSetupFlow = ({
           pets: '',
           guestPolicy: mapGuestPolicy(guests)
         },
-        // In edit mode the user explicitly completes profile -> unlock matching.
+        profilePicture: cloudinaryUrl || photoPreview, // Sync single field
         profileCompleted: mode === 'edit' ? true : intent === 'explore' ? false : true
-      });
-      if (photoFile) {
-        await uploadProfilePhoto(photoFile);
+      };
+
+      await updateProfile(profileData);
+
+      if (callOnComplete) {
+        onComplete();
       }
-      if (callOnComplete) onComplete();
     } catch (err) {
+      console.error('Submit profile error:', err);
       setFormError(err?.response?.data?.message || err?.message || 'Failed to save profile.');
     } finally {
       setSubmitting(false);
@@ -328,7 +379,7 @@ export const ProfileSetupFlow = ({
         setIntent(u?.intent ? String(u.intent) : null);
         const existingPhoto = u?.photo || u?.profilePicture || '';
         if (existingPhoto) {
-          setPhotoPreview(existingPhoto);
+          setPhotoPreview(normalizeImageUrl(existingPhoto));
         }
         if (u?.budgetRange?.min != null && u?.budgetRange?.max != null) {
           const base = (Number(u.budgetRange.min) + Number(u.budgetRange.max)) / 2;
@@ -373,28 +424,19 @@ export const ProfileSetupFlow = ({
         <div role="button" tabIndex={0} onClick={() => fileInputRef.current?.click()} onKeyDown={e => {
         if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click();
       }} className="relative w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center border-2 border-dashed border-slate-300 cursor-pointer hover:bg-slate-50 transition-colors group overflow-hidden">
-          {photoPreview ? <img src={photoPreview} alt="Profile preview" className="w-full h-full object-cover" /> : <Camera size={24} className="text-slate-400 group-hover:text-slate-600" />}
+          {isUploadingPhoto ? (
+            <div className="flex flex-col items-center gap-1">
+              <div className="w-5 h-5 border-2 border-primary border-t-transparent animate-spin rounded-full" />
+              <span className="text-[10px] font-medium text-slate-500">Uploading...</span>
+            </div>
+          ) : photoPreview ? <img src={photoPreview} alt="Profile preview" className="w-full h-full object-cover" /> : <Camera size={24} className="text-slate-400 group-hover:text-slate-600" />}
           <div className="absolute bottom-0 right-0 bg-[#081A35] p-2 rounded-full text-white border-2 border-white">
              <div className="text-[10px] font-bold">+</div>
           </div>
           <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={e => {
-          const file = e.target.files?.[0];
-          if (!file) return;
-          const okTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
-          if (!okTypes.includes(file.type)) {
-            setFormError('Please upload a valid image file.');
-            return;
-          }
-          if (file.size > 5 * 1024 * 1024) {
-            setFormError('Image size must be under 5MB.');
-            return;
-          }
-          setFormError('');
-          setPhotoFile(file);
-          const reader = new FileReader();
-          reader.onload = () => setPhotoPreview(String(reader.result || ''));
-          reader.readAsDataURL(file);
-        }} />
+            const file = e.target.files?.[0];
+            if (file) handlePhotoUpload(file);
+          }} />
         </div>
         <span className="text-xs text-slate-500 mt-2">Upload Profile Photo</span>
       </div>
