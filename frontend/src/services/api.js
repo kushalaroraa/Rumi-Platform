@@ -1,5 +1,16 @@
 import axios from 'axios';
-export const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.MODE === 'development' ? 'http://localhost:9090' : '');
+import { getBackendBaseUrl } from './backendUrl';
+
+// Accept either the backend origin (http://localhost:9090) or a proxied /api value.
+// The app always calls routes with their real backend path, so we only normalize the base URL here.
+export const API_BASE_URL = getBackendBaseUrl();
+
+const apiPath = (path) => {
+  const normalized = String(path || '').trim();
+  if (!normalized) return '/api';
+  if (normalized.startsWith('http://') || normalized.startsWith('https://')) return normalized;
+  return normalized.startsWith('/') ? normalized : `/${normalized}`;
+};
 
 export const normalizeImageUrl = (src) => {
   if (!src) return 'https://ui-avatars.com/api/?name=User&background=random'; // Safe dynamic placeholder
@@ -85,10 +96,22 @@ export async function sendAssistantMessage(payload) {
 
 // Profile
 export async function updateProfile(data) {
-  return api.put('/user/profile', data);
+  return api.put(apiPath('/api/user/profile'), data);
 }
 export async function getProfile() {
-  return api.get('/user/profile');
+  return api.get(apiPath('/api/user/profile'));
+}
+export async function deleteProfile() {
+  return api.delete(apiPath('/api/user/delete-account'));
+}
+export async function deleteAccount() {
+  return api.delete(apiPath('/api/user/delete-account'));
+}
+export async function updatePassword(data) {
+  return api.post(apiPath('/api/user/change-password'), data);
+}
+export async function changePassword(data) {
+  return api.post(apiPath('/api/user/change-password'), data);
 }
 export async function uploadProfilePhoto(file) {
   const form = new FormData();
