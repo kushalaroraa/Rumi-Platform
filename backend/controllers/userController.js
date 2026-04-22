@@ -1,7 +1,6 @@
 const path = require('path');
 const multer = require('multer');
 const User = require('../models/User');
-const { Notification } = require('../models/Notification');
 const fs = require('fs');
 
 // Local Multer storage for profile photos is deprecated in favor of Cloudinary (see uploadController.js)
@@ -32,7 +31,7 @@ async function updateProfile(req, res) {
     const allowed = [
       'name', 'age', 'gender', 'city', 'profession', 'budgetRange', 'bio', 'photo',
       'lifestylePreferences', 'verificationStatus', 'location', 'profilePicture', 'profileCompleted',
-      'intent', 'notificationSettings', 'privacySettings', 'securitySettings'
+      'intent'
     ];
     const updates = {};
     for (const key of allowed) {
@@ -83,7 +82,7 @@ module.exports = {
 // Delete profile (account removal)
 async function deleteProfile(req, res) {
   try {
-    const user = await User.findByIdAndDelete(req.userId);
+    const user = await User.findByIdAndDelete(req.userId).select('-passwordHash');
     if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
     return res.json({ success: true, message: 'Account deleted.' });
   } catch (err) {
@@ -93,58 +92,3 @@ async function deleteProfile(req, res) {
 }
 
 module.exports.deleteProfile = deleteProfile;
-
-async function changePassword(req, res) {
-  try {
-    const { currentPassword, newPassword } = req.body || {};
-    if (String(newPassword).length < 6) {
-      return res.status(400).json({ success: false, message: 'New password must be at least 6 characters.' });
-    }
-
-    const user = await User.findById(req.userId);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found.' });
-    }
-
-    const bcrypt = require('bcryptjs');
-    const isGoogleAccount = user.authProvider === 'google' && user.googleId;
-    const hasPassword = Boolean(user.passwordHash);
-
-    if (!isGoogleAccount && !hasPassword) {
-      return res.status(400).json({ success: false, message: 'This account does not have a password set yet.' });
-    }
-
-    if (!isGoogleAccount || hasPassword) {
-      if (!currentPassword || !newPassword) {
-        return res.status(400).json({ success: false, message: 'Current password and new password are required.' });
-      }
-      const matches = await bcrypt.compare(currentPassword, user.passwordHash);
-      if (!matches) {
-        return res.status(401).json({ success: false, message: 'Current password is incorrect.' });
-      }
-    }
-
-    user.passwordHash = await bcrypt.hash(newPassword, 10);
-    await user.save();
-
-    try {
-      await Notification.create({
-        userId: user._id,
-        type: 'security',
-        title: 'Password changed',
-        message: 'Your account password was updated successfully.',
-        read: false,
-        meta: { source: 'settings' }
-      });
-    } catch (notificationErr) {
-      console.warn('password change notification failed:', notificationErr);
-    }
-
-    return res.json({ success: true, message: 'Password updated successfully.' });
-  } catch (err) {
-    console.error('changePassword error:', err);
-    return res.status(500).json({ success: false, message: err.message || 'Server error.' });
-  }
-}
-
-module.exports.changePassword = changePassword;

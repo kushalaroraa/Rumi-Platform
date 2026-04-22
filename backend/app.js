@@ -4,8 +4,26 @@ const { getAssistantReply } = require("./services/geminiService");
 
 const app = express();
 
+const clientUrl = (process.env.CLIENT_URL || '').replace(/\/$/, '');
+const allowedOrigins = [
+  clientUrl,
+  "https://rumi-platform.vercel.app",
+  "http://localhost:5173", // Vite default
+  "http://localhost:3000"  // CRA default
+].filter(Boolean);
+
 app.use(cors({
-  origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
+      callback(null, true);
+    } else {
+      // Use standard falsy response instead of an error to prevent preflight crashes
+      callback(null, false);
+    }
+  },
   credentials: true
 }));
 app.use(express.json());
@@ -40,7 +58,6 @@ app.use('/api/auth', authRoutes);
 // User profile routes (no /api prefix because frontend calls /user/... )
 const userRoutes = require('./routes/userRoutes');
 app.use('/user', userRoutes);
-app.use('/api/user', userRoutes);
 
 // RAG chatbot routes
 const ragRoutes = require('./routes/ragRoutes');
