@@ -8,11 +8,11 @@ export const ChatThreadCard = ({
   const avatar = thread?.image || '';
   return <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={e => {
     if (e.key === 'Enter' || e.key === ' ') onOpen();
-  }} className="border border-gray-100 rounded-2xl p-4 bg-white cursor-pointer hover:shadow-sm transition-shadow">
+  }} className="border border-gray-200 rounded-2xl p-4 bg-white/95 cursor-pointer hover:shadow-sm hover:border-sky-200 transition-all">
       <div className="flex items-start gap-3">
         <div className="relative w-12 h-12">
-          <Avatar src={avatar} alt={thread?.name || 'User'} className="w-12 h-12 rounded-full" />
-          {Number(thread?.unreadCount ?? 0) > 0 && <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-[10px] rounded-full px-2 py-1">
+          <Avatar src={avatar} alt={thread?.name || 'User'} className="w-12 h-12 rounded-full ring-2 ring-white shadow-sm" />
+          {Number(thread?.unreadCount ?? 0) > 0 && <span className="absolute -top-1 -right-1 bg-sky-600 text-white text-[10px] rounded-full px-2 py-1">
               {thread.unreadCount}
             </span>}
         </div>
@@ -20,9 +20,9 @@ export const ChatThreadCard = ({
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-3">
             <p className="font-semibold text-gray-900 text-sm truncate">{thread?.name || 'User'}</p>
-            <MessageCircle size={16} className="text-blue-600" />
+            <MessageCircle size={16} className="text-sky-600" />
           </div>
-          <p className="text-sm text-gray-600 mt-2">
+          <p className="text-sm text-gray-600 mt-1.5 line-clamp-2">
             {thread?.lastMessagePreview ? thread.lastMessagePreview : 'No messages yet.'}
           </p>
         </div>

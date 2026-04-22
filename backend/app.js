@@ -73,6 +73,10 @@ const matchRoutes = require('./routes/matchRoutes');
 app.use('/api/request', requestRoutes);
 app.use('/api/matches', matchRoutes);
 
+// Chat routes
+const chatRoutes = require('./routes/chatRoutes');
+app.use('/chat', chatRoutes);
+
 // Cloudinary upload routes
 const uploadRoutes = require('./routes/uploadRoutes');
 app.use('/api/upload', uploadRoutes);

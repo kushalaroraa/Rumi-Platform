@@ -14,8 +14,8 @@ export const ListingCard = ({
   return <div role="button" tabIndex={0} onClick={onSelect} onKeyDown={e => {
     if (e.key === 'Enter' || e.key === ' ') onSelect();
   }} className={`border rounded-2xl p-4 bg-white transition-shadow cursor-pointer hover:shadow-sm ${selected ? 'border-blue-600 shadow-md' : 'border-gray-200'}`}>
-      <div className="flex items-start gap-4">
-        <div className="w-24 h-24 rounded-xl bg-slate-100 overflow-hidden flex-shrink-0">
+      <div className="flex items-start gap-3">
+        <div className="w-[72px] h-[72px] md:w-[80px] md:h-[80px] rounded-xl bg-slate-100 overflow-hidden flex-shrink-0">
           <img src={room?.coverUrl || room?.photoUrls?.[0] || 'https://images.unsplash.com/photo-1496307653780-42ee777d4833?w=200&h=200&fit=crop'} alt={room?.propertyType || 'Room'} className="w-full h-full object-cover" />
         </div>
 
@@ -34,7 +34,7 @@ export const ListingCard = ({
             </span>
           </div>
 
-          <div className="mt-3 space-y-2">
+          <div className="mt-2 space-y-2">
             <div className="flex items-center gap-2 text-sm">
               <span className="font-semibold text-gray-900">₹{room?.monthlyRent ?? 0}</span>
               <span className="text-gray-500">/ month</span>

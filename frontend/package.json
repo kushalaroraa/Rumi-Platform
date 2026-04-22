@@ -41,6 +41,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "embla-carousel-react": "^8.6.0",
+    "firebase": "^12.12.1",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.487.0",
     "motion": "^12.5.0",
@@ -52,6 +53,7 @@
     "react-resizable-panels": "^2.1.7",
     "react-router-dom": "^7.13.2",
     "recharts": "^2.15.2",
+    "socket.io-client": "^4.8.3",
     "sonner": "^2.0.3",
     "tailwind-merge": "^2.6.0",
     "vaul": "^1.1.2"

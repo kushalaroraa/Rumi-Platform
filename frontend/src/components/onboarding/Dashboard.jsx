@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
-import { Home, Search, Heart, MessageCircle, User, Settings, LogOut, Bell, Users, DollarSign, Sparkles, BarChart3, Target, X, Edit, Send, Clock, Check, XCircle } from 'lucide-react';
+import { Home, Search, Heart, MessageCircle, User, Settings, LogOut, Bell, Users, DollarSign, Sparkles, BarChart3, Target, X, Edit, Send, Clock, Check, XCircle, Inbox } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from '../ui/dropdown-menu';
 import { getMatches, getReceivedRequests, getReceivedAcceptedRequests, getSentRequests, sendRequest, passRequest, acceptRequest, rejectRequest, getChatHistory, getProfile, getRecommendedRooms, normalizeImageUrl } from '../../services/api';
@@ -10,7 +10,7 @@ import { OfferRoomDashboard } from '../offer/OfferRoomDashboard';
 import { Sidebar } from '../layout/Sidebar';
 import UserProfile from '../../pages/UserProfile';
 import SettingsPage from '../../pages/Settings';
-import MessageWidget from '../../pages/MessageWidget';
+import ChatPage from '../../pages/ChatPage';
 import { Avatar } from '../common/Avatar';
 
 export const Dashboard = ({
@@ -42,6 +42,20 @@ export const Dashboard = ({
   const explorePromptShownRef = useRef(false);
   const [roomDetailsOpen, setRoomDetailsOpen] = useState(false);
   const [roomDetailsRoom, setRoomDetailsRoom] = useState(null);
+    const getCurrentUserId = () => {
+      try {
+        const raw = localStorage.getItem('rumi_user');
+        return raw ? String(JSON.parse(raw)?._id || '') : '';
+      } catch {
+        return '';
+      }
+    };
+    const resolveChatTarget = (candidate) => {
+      const target = candidate ? String(candidate) : '';
+      const meId = getCurrentUserId();
+      if (!target || target === meId) return null;
+      return target;
+    };
   
   // Swipe & Animation state
   const [isLocked, setIsLocked] = useState(false);
@@ -55,6 +69,38 @@ export const Dashboard = ({
   }, [swipeCards]);
   const nearbyMatchesCount = swipeCards.length;
   const lifestyleMatchScore = avgMatchScore;
+  const notifications = useMemo(() => {
+    const items = [];
+
+    for (const req of requestsReceived) {
+      items.push({
+        id: `received-${req.id}`,
+        title: 'New request received',
+        subtitle: `${req.name} sent you a request`,
+        type: 'request',
+      });
+    }
+
+    for (const req of sentRequests) {
+      items.push({
+        id: `sent-${req.id}`,
+        title: `Request ${req.status}`,
+        subtitle: `${req.name} • ${req.status}`,
+        type: 'sent',
+      });
+    }
+
+    for (const match of activeMatches) {
+      items.push({
+        id: `match-${match.id}`,
+        title: 'New active match',
+        subtitle: `${match.name} is now an active match`,
+        type: 'match',
+      });
+    }
+
+    return items.slice(0, 30);
+  }, [requestsReceived, sentRequests, activeMatches]);
   useEffect(() => {
     if (userEmail) {
       setShowLoginNotice(true);
@@ -321,7 +367,11 @@ export const Dashboard = ({
       if (direction === 'left') {
         passRequest(top.userId).catch(e => console.error('passRequest error', e));
       } else {
-        sendRequest(top.userId).catch(e => console.error('sendRequest error', e));
+        const linkedRoom = top.hasRoom
+          ? (recommendedRooms || []).find(r => String(r?.ownerUserId) === String(top.userId))
+          : null;
+        const roomId = linkedRoom?._id || null;
+        sendRequest(top.userId, roomId).catch(e => console.error('sendRequest error', e));
       }
     } catch (e) {
       console.error('handleSwipe backend start error', e);
@@ -342,15 +392,18 @@ export const Dashboard = ({
   const quickActions = [{
     icon: MessageCircle,
     label: 'View Messages',
-    color: 'blue'
+    color: 'blue',
+    onClick: () => setActiveNav('messages')
   }, {
     icon: Edit,
     label: 'Edit Preferences',
-    color: 'purple'
+    color: 'purple',
+    onClick: () => onEditProfile?.()
   }, {
     icon: User,
     label: 'Complete Profile',
-    color: 'green'
+    color: 'green',
+    onClick: () => setActiveNav('profile')
   }];
   if (!intentResolved) {
     return <div className="min-h-screen bg-gray-100 flex items-center justify-center">
@@ -362,10 +415,26 @@ export const Dashboard = ({
   }
   const seekerNavItems = [
     { id: 'dashboard', label: 'Discover Matches', icon: Home },
+    { id: 'requests', label: 'Requests', icon: Inbox },
     { id: 'messages', label: 'Messages', icon: MessageCircle },
+    { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'profile', label: 'Profile', icon: User },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
+
+  const pageTitle = activeNav === 'dashboard'
+    ? 'Dashboard'
+    : activeNav === 'requests'
+      ? 'Requests'
+      : activeNav === 'messages'
+        ? 'Messages'
+        : activeNav === 'notifications'
+          ? 'Notifications'
+          : activeNav === 'profile'
+            ? 'Profile'
+            : 'Settings';
+
+  const showDashboardWidgets = activeNav === 'dashboard';
 
   return <div className="min-h-screen bg-gray-100 flex h-screen overflow-hidden">
     <Sidebar
@@ -380,7 +449,7 @@ export const Dashboard = ({
       {/* Top Navigation Bar */}
       <header className="bg-white shadow-sm px-8 py-4 sticky top-0 z-10">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
+          <h1 className="text-2xl font-semibold text-gray-900">{pageTitle}</h1>
 
           <div className="flex items-center gap-4">
             {/* Search */}
@@ -390,7 +459,7 @@ export const Dashboard = ({
             </div>
 
             {/* Icons */}
-            <button className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200 transition-colors relative">
+            <button type="button" onClick={() => setActiveNav('notifications')} className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200 transition-colors relative">
               <Bell size={20} />
               <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
             </button>
@@ -430,11 +499,90 @@ export const Dashboard = ({
         {showLoginNotice && userEmail && <div className="mb-6 rounded-xl bg-emerald-50 border border-emerald-100 px-4 py-3 text-emerald-800 text-sm">
           Logged in as <span className="font-semibold">{userEmail}</span>
         </div>}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {activeNav === 'messages' ? <div className="w-full">
+          <ChatPage initialOtherUserId={chatWithUserId} />
+        </div> : <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Main Column - Content switching (2/3 width) */}
           <div className="lg:col-span-2">
             {activeNav === 'profile' && <UserProfile />}
             {activeNav === 'settings' && <SettingsPage />}
+
+            {activeNav === 'requests' && <div className="bg-white rounded-3xl p-8 shadow-sm space-y-8">
+              <div>
+                <h2 className="text-2xl font-semibold text-gray-900 mb-1">Requests</h2>
+                <p className="text-gray-500">Review incoming and sent requests.</p>
+              </div>
+
+              <div>
+                <h3 className="font-semibold text-gray-900 mb-4">Incoming Requests</h3>
+                <div className="space-y-4">
+                  {requestsReceived.length === 0 ? <p className="text-sm text-gray-500">No incoming requests.</p> : requestsReceived.map(request => <div key={request.id} className="flex items-center justify-between gap-4 p-4 bg-gray-50 rounded-xl border border-gray-100">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar src={request.image} alt={request.name} className="w-12 h-12 rounded-full" />
+                      <div className="min-w-0">
+                        <p className="font-semibold text-gray-900 text-sm truncate">{request.name}, {request.age}</p>
+                        <p className="text-xs text-emerald-600 font-medium">{request.match}% Match</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={async () => {
+                        try {
+                          setSending(true);
+                          await acceptRequest({ requestId: request.requestId });
+                          await reloadDashboard();
+                          setChatWithUserId(request.userId);
+                          setActiveNav('messages');
+                        } finally {
+                          setSending(false);
+                        }
+                      }} disabled={sending} className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+                        Accept
+                      </button>
+                      <button type="button" onClick={async () => {
+                        try {
+                          setSending(true);
+                          await rejectRequest({ requestId: request.requestId });
+                          await reloadDashboard();
+                        } finally {
+                          setSending(false);
+                        }
+                      }} disabled={sending} className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50">
+                        Reject
+                      </button>
+                    </div>
+                  </div>)}
+                </div>
+              </div>
+
+              <div>
+                <h3 className="font-semibold text-gray-900 mb-4">Sent Requests</h3>
+                <div className="space-y-3">
+                  {sentRequests.length === 0 ? <p className="text-sm text-gray-500">No sent requests yet.</p> : sentRequests.map(request => <div key={request.id} className="flex items-center justify-between gap-4 p-4 bg-gray-50 rounded-xl border border-gray-100">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar src={request.image} alt={request.name} className="w-10 h-10 rounded-full" />
+                      <div className="min-w-0">
+                        <p className="font-semibold text-gray-900 text-sm truncate">{request.name}, {request.age}</p>
+                        <p className="text-xs text-gray-500">{request.match}% Match</p>
+                      </div>
+                    </div>
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${request.status === 'pending' ? 'bg-yellow-50 text-yellow-600' : request.status === 'accepted' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                      {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                    </span>
+                  </div>)}
+                </div>
+              </div>
+            </div>}
+
+            {activeNav === 'notifications' && <div className="bg-white rounded-3xl p-8 shadow-sm">
+              <h2 className="text-2xl font-semibold text-gray-900 mb-1">Notifications</h2>
+              <p className="text-gray-500 mb-6">Recent activity from your account.</p>
+              <div className="space-y-3">
+                {notifications.length === 0 ? <p className="text-sm text-gray-500">No notifications yet.</p> : notifications.map((n) => <div key={n.id} className="p-4 rounded-xl border border-gray-100 bg-gray-50">
+                  <p className="text-sm font-semibold text-gray-900">{n.title}</p>
+                  <p className="text-xs text-gray-500 mt-1">{n.subtitle}</p>
+                </div>)}
+              </div>
+            </div>}
 
             {activeNav === 'dashboard' && <div className="bg-white rounded-3xl p-8 shadow-sm">
               <div className="mb-6">
@@ -552,18 +700,8 @@ export const Dashboard = ({
 
           {/* Right Column - Side Widgets */}
           <div className="space-y-6">
-            <MessageWidget
-              activeNav={activeNav}
-              setActiveNav={setActiveNav}
-              chatLoading={chatLoading}
-              chatWithUserId={chatWithUserId}
-              chatMessages={chatMessages}
-              setChatWithUserId={setChatWithUserId}
-              setChatMessages={setChatMessages}
-            />
-
             {/* Requests Received */}
-            {activeNav !== 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
+            {showDashboardWidgets && <div className="bg-white rounded-2xl p-6 shadow-sm">
               <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <Heart size={20} className="text-blue-600" />
                 Requests Received
@@ -614,7 +752,7 @@ export const Dashboard = ({
             </div>}
 
             {/* Sent Requests */}
-            {activeNav !== 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
+            {showDashboardWidgets && <div className="bg-white rounded-2xl p-6 shadow-sm">
               <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <Send size={20} className="text-blue-600" />
                 Sent Requests
@@ -639,7 +777,7 @@ export const Dashboard = ({
             </div>}
 
             {/* Active Matches */}
-            {activeNav !== 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
+            {showDashboardWidgets && <div className="bg-white rounded-2xl p-6 shadow-sm">
               <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <Users size={20} className="text-blue-600" />
                 Active Matches
@@ -654,7 +792,9 @@ export const Dashboard = ({
                     <p className="text-xs text-emerald-600 font-medium">{match.match}% Match</p>
                   </div>
                   <button type="button" onClick={() => {
-                    setChatWithUserId(match.userId ?? match.id);
+                    const target = resolveChatTarget(match.userId ?? match.id);
+                    if (!target) return;
+                    setChatWithUserId(target);
                     setActiveNav('messages');
                   }} className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white hover:bg-blue-700 transition-colors">
                     <MessageCircle size={16} />
@@ -664,12 +804,12 @@ export const Dashboard = ({
             </div>}
 
             {/* Quick Actions */}
-            {activeNav !== 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
+            {showDashboardWidgets && <div className="bg-white rounded-2xl p-6 shadow-sm">
               <h3 className="font-semibold text-gray-900 mb-4">Quick Actions</h3>
               <div className="space-y-2">
                 {quickActions.map((action, index) => {
                   const Icon = action.icon;
-                  return <button key={index} className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors">
+                  return <button key={index} type="button" onClick={action.onClick} className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors">
                     <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${action.color === 'blue' ? 'bg-blue-100 text-blue-600' : action.color === 'purple' ? 'bg-purple-100 text-purple-600' : 'bg-emerald-100 text-emerald-600'}`}>
                       <Icon size={20} />
                     </div>
@@ -680,7 +820,7 @@ export const Dashboard = ({
             </div>}
 
             {/* Compatibility Insights */}
-            {activeNav !== 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
+            {showDashboardWidgets && <div className="bg-white rounded-2xl p-6 shadow-sm">
               <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <Target size={20} className="text-blue-600" />
                 Compatibility Insights
@@ -710,7 +850,7 @@ export const Dashboard = ({
               </div>
             </div>}
           </div>
-        </div>
+        </div>}
       </div>
     </main>
 

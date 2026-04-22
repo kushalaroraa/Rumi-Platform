@@ -12,6 +12,7 @@ import { Sidebar } from '../layout/Sidebar';
 import RoomProfile from '../../pages/RoomProfile';
 import SettingsPage from '../../pages/Settings';
 import { Avatar } from '../common/Avatar';
+import { getSocket } from '../../services/socket';
 
 export const OfferRoomDashboard = ({
   onLogout,
@@ -35,11 +36,27 @@ export const OfferRoomDashboard = ({
   const [chatLoading, setChatLoading] = useState(false);
   const [activeOtherUserId, setActiveOtherUserId] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
+  const [chatDraft, setChatDraft] = useState('');
+  const [chatError, setChatError] = useState('');
   const [roomModalOpen, setRoomModalOpen] = useState(false);
   const [roomModalMode, setRoomModalMode] = useState('create');
   const [roomModalInitialRoom, setRoomModalInitialRoom] = useState(undefined);
   const requestsCardRef = useRef(null);
   const chatsCardRef = useRef(null);
+  const getCurrentUserId = () => {
+    try {
+      const raw = localStorage.getItem('rumi_user');
+      return raw ? String(JSON.parse(raw)?._id || '') : '';
+    } catch {
+      return '';
+    }
+  };
+  const resolveChatTarget = (candidate) => {
+    const target = candidate ? String(candidate) : '';
+    const meId = getCurrentUserId();
+    if (!target || target === meId) return null;
+    return target;
+  };
   const normalizeImageUrl = src => {
     if (!src) return '';
     const str = String(src);
@@ -51,6 +68,27 @@ export const OfferRoomDashboard = ({
     if (!selectedRoomId) return null;
     return listings.find(r => String(r._id) === String(selectedRoomId)) || null;
   }, [selectedRoomId, listings]);
+  const notifications = useMemo(() => {
+    const items = [];
+
+    for (const r of incomingRequests) {
+      items.push({
+        id: `incoming-${r._id}`,
+        title: 'New room request',
+        subtitle: `${r?.fromUserId?.name || 'User'} requested your listing`,
+      });
+    }
+
+    for (const t of chatThreads) {
+      items.push({
+        id: `chat-${t.otherUserId}`,
+        title: 'Active chat update',
+        subtitle: `${t.name || 'User'} has an active conversation`,
+      });
+    }
+
+    return items.slice(0, 30);
+  }, [incomingRequests, chatThreads]);
   const loadAvatar = async () => {
     try {
       const res = await getProfile();
@@ -132,14 +170,69 @@ export const OfferRoomDashboard = ({
     loadRoomPanels(String(selectedRoomId));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRoomId]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket || !chatOpen || !activeOtherUserId || !selectedRoomId) return;
+
+    socket.emit('join_chat', {
+      otherUserId: activeOtherUserId,
+      roomId: selectedRoomId,
+    }, (ack) => {
+      if (!ack?.ok) {
+        setChatError(ack?.error || 'Unable to join chat.');
+      }
+    });
+
+    const onNewMessage = (msg) => {
+      const sender = String(msg?.senderId?._id || msg?.senderId || '');
+      const receiver = String(msg?.receiverId?._id || msg?.receiverId || '');
+
+      let me = '';
+      try {
+        const raw = localStorage.getItem('rumi_user');
+        me = raw ? String(JSON.parse(raw)?._id || '') : '';
+      } catch {
+        me = '';
+      }
+
+      const isThisChat =
+        (sender === String(activeOtherUserId) && receiver === me) ||
+        (sender === me && receiver === String(activeOtherUserId));
+
+      if (!isThisChat) return;
+
+      setChatMessages((prev) => {
+        if (prev.some((x) => String(x._id) === String(msg._id))) return prev;
+        return [...prev, {
+          _id: msg._id,
+          senderId: msg.senderId,
+          receiverId: msg.receiverId,
+          message: msg.message,
+          createdAt: msg.createdAt,
+          isOwn: sender === me,
+        }];
+      });
+    };
+
+    socket.on('new_message', onNewMessage);
+    return () => socket.off('new_message', onNewMessage);
+  }, [chatOpen, activeOtherUserId, selectedRoomId]);
   const openChat = async otherUserId => {
+    const resolvedOtherUserId = resolveChatTarget(otherUserId);
+    if (!resolvedOtherUserId) {
+      setChatError('Pick another user to start chatting.');
+      return;
+    }
     if (!selectedRoomId) return;
     setChatOpen(true);
-    setActiveOtherUserId(otherUserId);
+    setActiveOtherUserId(resolvedOtherUserId);
     setChatLoading(true);
     setChatMessages([]);
+    setChatError('');
+    setChatDraft('');
     try {
-      const res = await getChatHistoryWithRoom(otherUserId, selectedRoomId);
+      const res = await getChatHistoryWithRoom(resolvedOtherUserId, selectedRoomId);
       setChatMessages(res?.data?.messages || []);
       // Refresh unread counts after opening.
       await getChatThreads(selectedRoomId).then(r => setChatThreads(r?.data?.threads || []));
@@ -148,6 +241,30 @@ export const OfferRoomDashboard = ({
     } finally {
       setChatLoading(false);
     }
+  };
+
+  const sendChatMessage = () => {
+    const text = chatDraft.trim();
+    if (!text || !activeOtherUserId || !selectedRoomId) return;
+
+    const socket = getSocket();
+    if (!socket) {
+      setChatError('Socket unavailable. Please login again.');
+      return;
+    }
+
+    setChatDraft('');
+    setChatError('');
+
+    socket.emit('send_message', {
+      otherUserId: activeOtherUserId,
+      roomId: selectedRoomId,
+      message: text,
+    }, (ack) => {
+      if (!ack?.ok) {
+        setChatError(ack?.error || 'Failed to send message.');
+      }
+    });
   };
   const openCreateEditor = () => {
     setRoomModalMode('create');
@@ -163,15 +280,20 @@ export const OfferRoomDashboard = ({
   const reloadEverything = async () => {
     await loadListings();
   };
-  const handleAcceptRequest = async requestId => {
+  const handleAcceptRequest = async request => {
     if (!selectedRoomId) return;
     setActionSending(true);
     try {
       await acceptRequest({
-        requestId,
+        requestId: request?._id,
         roomId: selectedRoomId
       });
       await reloadEverything();
+      const target = resolveChatTarget(request?.fromUserId?._id);
+      if (target) {
+        setActiveNav('messages');
+        await openChat(target);
+      }
     } finally {
       setActionSending(false);
     }
@@ -278,8 +400,25 @@ export const OfferRoomDashboard = ({
         </span>
       )
     },
+    { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
+
+  const pageTitle = activeNav === 'dashboard'
+    ? 'Dashboard'
+    : activeNav === 'listings'
+      ? 'My Listings'
+      : activeNav === 'requests'
+        ? 'Requests'
+        : activeNav === 'messages'
+          ? 'Messages'
+          : activeNav === 'notifications'
+            ? 'Notifications'
+            : activeNav === 'profile'
+              ? 'Profile'
+              : 'Settings';
+
+    const isMainBoard = activeNav === 'dashboard' || activeNav === 'listings';
 
   return <div className="min-h-screen bg-gray-100 flex h-screen overflow-hidden">
     <Sidebar
@@ -298,7 +437,7 @@ export const OfferRoomDashboard = ({
     <main className="flex-1 overflow-auto">
       <header className="bg-white shadow-sm px-8 py-4 sticky top-0 z-10">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
+          <h1 className="text-2xl font-semibold text-gray-900">{pageTitle}</h1>
 
           <div className="flex items-center gap-4">
             <div className="relative">
@@ -306,7 +445,7 @@ export const OfferRoomDashboard = ({
               <input type="text" placeholder="Search listings, requests, messages" className="pl-10 pr-4 py-2 bg-gray-100 border-0 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-80" />
             </div>
 
-            <button className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200 transition-colors relative">
+            <button type="button" onClick={() => setActiveNav('notifications')} className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200 transition-colors relative">
               <Bell size={20} />
               <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
             </button>
@@ -342,8 +481,51 @@ export const OfferRoomDashboard = ({
       <div className="p-8">
         {activeNav === 'profile' && <RoomProfile />}
         {activeNav === 'settings' && <SettingsPage />}
+        {activeNav === 'notifications' && <div className="bg-white rounded-3xl p-8 shadow-sm">
+          <h2 className="text-2xl font-semibold text-gray-900 mb-1">Notifications</h2>
+          <p className="text-gray-500 mb-6">Recent activity for your room listings.</p>
+          <div className="space-y-3">
+            {notifications.length === 0 ? <p className="text-sm text-gray-500">No notifications yet.</p> : notifications.map((n) => <div key={n.id} className="p-4 rounded-xl border border-gray-100 bg-gray-50">
+              <p className="text-sm font-semibold text-gray-900">{n.title}</p>
+              <p className="text-xs text-gray-500 mt-1">{n.subtitle}</p>
+            </div>)}
+          </div>
+        </div>}
 
-        {(activeNav === 'dashboard' || activeNav === 'listings' || activeNav === 'requests' || activeNav === 'messages') && <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {activeNav === 'requests' && <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white rounded-3xl p-8 shadow-sm">
+            <h2 className="text-2xl font-semibold text-gray-900 mb-1">Requests</h2>
+            <p className="text-gray-500 mb-6">All incoming requests for your current listing.</p>
+            {!selectedRoomId ? <div className="text-sm text-gray-500">Select a listing to see requests.</div> : incomingLoading ? <div className="text-sm text-gray-500">Loading requests...</div> : incomingRequests.length === 0 ? <div className="text-sm text-gray-600 bg-gray-50 border border-gray-100 rounded-2xl p-4">No requests yet. Improve your listing to attract users.</div> : <div className="space-y-4">{incomingRequests.map(request => <IncomingRequestCard key={request._id} request={request} onAccept={() => handleAcceptRequest(String(request._id))} onReject={() => handleRejectRequest(String(request._id))} />)}</div>}
+          </div>
+
+          <div className="bg-white rounded-3xl p-8 shadow-sm">
+            <h2 className="text-2xl font-semibold text-gray-900 mb-1">Suggested Matches</h2>
+            <p className="text-gray-500 mb-6">Invite people who fit this listing.</p>
+            {!selectedRoomId ? <div className="text-sm text-gray-500">Select a listing to see matches.</div> : suggestionsLoading ? <div className="text-sm text-gray-500">Loading suggestions...</div> : suggestions.length === 0 ? <div className="text-sm text-gray-600 bg-gray-50 border border-gray-100 rounded-2xl p-4">No suggested matches right now.</div> : <div className="space-y-4">{suggestions.map(s => <SuggestedMatchCard key={s.userId} suggestion={s} onInvite={() => {
+              if (!selectedRoomId) return;
+              inviteToConnect(s.userId, selectedRoomId).then(async () => {
+                await reloadEverything();
+              }).catch(() => { });
+            }} />)}</div>}
+          </div>
+        </div>}
+
+        {activeNav === 'messages' && <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white rounded-3xl p-8 shadow-sm">
+            <h2 className="text-2xl font-semibold text-gray-900 mb-1">Messages</h2>
+            <p className="text-gray-500 mb-6">Open a chat thread to talk with accepted users.</p>
+            {!selectedRoomId ? <div className="text-sm text-gray-500">Select a listing to see active chats.</div> : threadsLoading ? <div className="text-sm text-gray-500">Loading chats...</div> : chatThreads.length === 0 ? <div className="text-sm text-gray-600 bg-gray-50 border border-gray-100 rounded-2xl p-4">No active chats yet.</div> : <div className="space-y-4">{chatThreads.map(thread => <ChatThreadCard key={thread.otherUserId} thread={thread} onOpen={() => openChat(String(thread.otherUserId))} />)}</div>}
+          </div>
+
+          <div className="bg-white rounded-3xl p-8 shadow-sm">
+            <h2 className="text-2xl font-semibold text-gray-900 mb-1">Chat Preview</h2>
+            <p className="text-gray-500 mb-6">Click a thread to open the chat modal.</p>
+            {chatOpen && selectedRoomId && activeOtherUserId ? <div className="text-sm text-gray-500">Chat modal is open. Use the popup to message.</div> : <div className="text-sm text-gray-500">Select a chat thread to start messaging.</div>}
+          </div>
+        </div>}
+
+        {isMainBoard && <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-white rounded-3xl p-8 shadow-sm">
               <div className="mb-6">
@@ -422,7 +604,7 @@ export const OfferRoomDashboard = ({
               {!selectedRoomId ? <div className="text-sm text-gray-500">Select a listing to see requests.</div> : incomingLoading ? <div className="text-sm text-gray-500">Loading requests...</div> : incomingRequests.length === 0 ? <div className="text-sm text-gray-600 bg-gray-50 border border-gray-100 rounded-2xl p-4">
                 No requests yet. Improve your listing to attract users.
               </div> : <div className="space-y-4">
-                {incomingRequests.map(request => <IncomingRequestCard key={request._id} request={request} onAccept={() => handleAcceptRequest(String(request._id))} onReject={() => handleRejectRequest(String(request._id))} />)}
+                {incomingRequests.map(request => <IncomingRequestCard key={request._id} request={request} onAccept={() => handleAcceptRequest(request)} onReject={() => handleRejectRequest(String(request._id))} />)}
               </div>}
             </div>
 
@@ -511,28 +693,29 @@ export const OfferRoomDashboard = ({
     }} />
 
     {/* Chat modal */}
-    {chatOpen && selectedRoomId && activeOtherUserId && <div className="fixed inset-0 z-[300] bg-black/50 flex items-center justify-center p-4">
-      <div className="w-full max-w-3xl bg-white rounded-3xl shadow-xl overflow-hidden">
-        <div className="p-6 border-b border-gray-100 flex items-start justify-between gap-4">
+    {chatOpen && selectedRoomId && activeOtherUserId && <div className="fixed inset-0 z-[300] bg-black/55 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-3xl bg-white rounded-[28px] shadow-2xl overflow-hidden border border-gray-200">
+        <div className="p-5 border-b border-gray-200 flex items-start justify-between gap-4 bg-white/95">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">
               Chat with {chatThreads.find(t => String(t.otherUserId) === String(activeOtherUserId))?.name || 'User'}
             </h2>
-            <p className="text-sm text-gray-500 mt-1">Room chat</p>
+            <p className="text-xs text-gray-500 mt-1">Direct messages for accepted requests</p>
+            {chatError ? <p className="text-xs text-red-600 mt-2">{chatError}</p> : null}
           </div>
           <button type="button" onClick={() => {
             setChatOpen(false);
             setChatMessages([]);
             setActiveOtherUserId(null);
-          }} className="w-10 h-10 rounded-full bg-gray-50 hover:bg-gray-100 flex items-center justify-center">
+          }} className="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center">
             <span className="text-gray-600">×</span>
           </button>
         </div>
 
-        <div className="p-6 max-h-[60vh] overflow-auto space-y-3">
+        <div className="p-5 max-h-[60vh] overflow-auto space-y-3 bg-[radial-gradient(circle_at_top,_#f3f7fb_0%,_#eef4f9_40%,_#e8f0f7_100%)]">
           {chatLoading ? <div className="text-sm text-gray-500">Loading messages...</div> : chatMessages.length === 0 ? <div className="text-sm text-gray-500">No messages yet.</div> : chatMessages.map(m => <div key={m._id} className={`flex ${m.isOwn ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[80%] p-3 rounded-2xl text-sm ${m.isOwn ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-900'}`}>
-              <div className="font-medium mb-1 text-xs opacity-90">
+            <div className={`max-w-[82%] p-3 rounded-2xl text-sm shadow-sm ${m.isOwn ? 'bg-gradient-to-br from-sky-100 to-blue-200 text-black rounded-br-md' : 'bg-white text-black border border-gray-200 rounded-bl-md'}`}>
+              <div className="font-medium mb-1 text-xs text-black/80">
                 {m.isOwn ? 'You' : m.senderId?.name || 'User'}
               </div>
               <div className="whitespace-pre-wrap">{m.message}</div>
@@ -540,8 +723,16 @@ export const OfferRoomDashboard = ({
           </div>)}
         </div>
 
-        <div className="p-6 border-t border-gray-100">
-          <input disabled value="Message sending is not enabled in this build." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-500" />
+        <div className="p-5 border-t border-gray-200 bg-white">
+          <p className="text-xs font-medium text-gray-600 mb-2">Send a message</p>
+          <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-2xl p-2">
+            <input value={chatDraft} onChange={(e) => setChatDraft(e.target.value)} onKeyDown={(e) => {
+              if (e.key === 'Enter') sendChatMessage();
+            }} placeholder="Send a message..." className="w-full px-3 py-2.5 bg-transparent border-0 rounded-xl text-sm text-gray-900 placeholder:text-gray-500 focus:outline-none" />
+            <button type="button" onClick={sendChatMessage} disabled={!chatDraft.trim()} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl disabled:opacity-50 shadow-sm">
+              Send
+            </button>
+          </div>
         </div>
       </div>
     </div>}

@@ -45,8 +45,16 @@ async function sendRequest(req, res) {
         if (roomIdStr) {
             room = await Room.findById(roomIdStr);
             if (!room) return res.status(404).json({ success: false, message: 'Room not found.' });
-            if (room.ownerUserId?.toString?.() !== fromUserId.toString()) {
-                return res.status(403).json({ success: false, message: 'You can only invite using your own listing.' });
+
+            const ownerId = room.ownerUserId?.toString?.();
+
+            // For room-scoped requests, sender and recipient must be between seeker and room owner.
+            const allowedPair =
+                (ownerId === fromUserId.toString() && toUserId.toString() !== fromUserId.toString()) ||
+                (ownerId === toUserId.toString() && fromUserId.toString() !== toUserId.toString());
+
+            if (!allowedPair) {
+                return res.status(403).json({ success: false, message: 'Room request must involve the room owner.' });
             }
         }
         if ((toUser.blockedUsers || []).some(id => id.toString() === fromUserId.toString())) {
