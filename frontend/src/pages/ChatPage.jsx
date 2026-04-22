@@ -66,17 +66,24 @@ const ChatAvatar = ({
 const ChatPage = ({
   initialOtherUserId = null,
 }) => {
+  const normalizeUserId = (value) => {
+    if (!value) return '';
+    if (typeof value === 'string' || typeof value === 'number') return String(value);
+    if (typeof value === 'object') return String(value?._id || value?.id || '');
+    return '';
+  };
+
   const getCurrentUserId = () => {
     try {
       const raw = localStorage.getItem('rumi_user');
-      return raw ? String(JSON.parse(raw)?._id || '') : '';
+      return raw ? normalizeUserId(JSON.parse(raw)?._id) : '';
     } catch {
       return '';
     }
   };
 
   const resolveOtherUserId = (candidate) => {
-    const otherUserId = candidate ? String(candidate) : '';
+    const otherUserId = normalizeUserId(candidate);
     const meId = getCurrentUserId();
     if (!otherUserId || otherUserId === meId) return null;
     return otherUserId;
@@ -162,7 +169,14 @@ const ChatPage = ({
     try {
       const res = await getChatThreads();
       const meId = getCurrentUserId();
-      const list = (res?.data?.threads || []).filter((thread) => String(thread?.otherUserId || '') !== meId);
+      const list = (res?.data?.threads || [])
+        .map((thread) => {
+          const otherUserId = resolveOtherUserId(thread?.otherUserId);
+          if (!otherUserId) return null;
+          return { ...thread, otherUserId };
+        })
+        .filter(Boolean)
+        .filter((thread) => String(thread.otherUserId) !== meId);
       setThreads(list);
       if (activeUserId && !list.some((thread) => String(thread.otherUserId) === String(activeUserId))) {
         setActiveUserId(resolveOtherUserId(list[0]?.otherUserId));
@@ -285,8 +299,8 @@ const ChatPage = ({
   };
 
   return (
-    <div className="w-full min-h-[calc(100vh-190px)] bg-white text-black overflow-hidden rounded-[28px] border border-gray-200 shadow-2xl">
-      <div className="flex h-full min-h-[calc(100vh-190px)]">
+    <div className="w-full h-full min-h-full bg-white text-black overflow-hidden">
+      <div className="flex h-full min-h-full">
         <aside className="w-[350px] shrink-0 border-r border-gray-200 bg-white flex flex-col">
           <div className="h-16 px-4 flex items-center justify-between border-b border-gray-200">
             <div className="min-w-0">

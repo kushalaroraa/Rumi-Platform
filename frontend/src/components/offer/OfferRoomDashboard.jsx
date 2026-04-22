@@ -43,20 +43,37 @@ export const OfferRoomDashboard = ({
   const [roomModalInitialRoom, setRoomModalInitialRoom] = useState(undefined);
   const requestsCardRef = useRef(null);
   const chatsCardRef = useRef(null);
+  const normalizeUserId = (value) => {
+    if (!value) return '';
+    if (typeof value === 'string' || typeof value === 'number') return String(value);
+    if (typeof value === 'object') return String(value?._id || value?.id || '');
+    return '';
+  };
   const getCurrentUserId = () => {
     try {
       const raw = localStorage.getItem('rumi_user');
-      return raw ? String(JSON.parse(raw)?._id || '') : '';
+      return raw ? normalizeUserId(JSON.parse(raw)?._id) : '';
     } catch {
       return '';
     }
   };
   const resolveChatTarget = (candidate) => {
-    const target = candidate ? String(candidate) : '';
+    const target = normalizeUserId(candidate);
     const meId = getCurrentUserId();
     if (!target || target === meId) return null;
     return target;
   };
+  const normalizeThreads = (threads = []) => threads
+    .map((t) => {
+      const otherUserId = resolveChatTarget(t?.otherUserId);
+      if (!otherUserId) return null;
+      return {
+        ...t,
+        otherUserId,
+        image: normalizeImageUrl(t?.image || ''),
+      };
+    })
+    .filter(Boolean);
   const normalizeImageUrl = src => {
     if (!src) return '';
     const str = String(src);
@@ -134,10 +151,7 @@ export const OfferRoomDashboard = ({
         }
       })));
       const threads = threadRes?.data?.threads || [];
-      setChatThreads(threads.map(t => ({
-        ...t,
-        image: normalizeImageUrl(t?.image || '')
-      })));
+      setChatThreads(normalizeThreads(threads));
       const suggestionsRes = suggRes?.data?.suggestions || [];
       setSuggestions(suggestionsRes.map(s => ({
         ...s,
@@ -185,16 +199,9 @@ export const OfferRoomDashboard = ({
     });
 
     const onNewMessage = (msg) => {
-      const sender = String(msg?.senderId?._id || msg?.senderId || '');
-      const receiver = String(msg?.receiverId?._id || msg?.receiverId || '');
-
-      let me = '';
-      try {
-        const raw = localStorage.getItem('rumi_user');
-        me = raw ? String(JSON.parse(raw)?._id || '') : '';
-      } catch {
-        me = '';
-      }
+      const sender = normalizeUserId(msg?.senderId);
+      const receiver = normalizeUserId(msg?.receiverId);
+      const me = getCurrentUserId();
 
       const isThisChat =
         (sender === String(activeOtherUserId) && receiver === me) ||
@@ -235,7 +242,7 @@ export const OfferRoomDashboard = ({
       const res = await getChatHistoryWithRoom(resolvedOtherUserId, selectedRoomId);
       setChatMessages(res?.data?.messages || []);
       // Refresh unread counts after opening.
-      await getChatThreads(selectedRoomId).then(r => setChatThreads(r?.data?.threads || []));
+      await getChatThreads(selectedRoomId).then(r => setChatThreads(normalizeThreads(r?.data?.threads || [])));
     } catch {
       setChatMessages([]);
     } finally {
@@ -365,7 +372,8 @@ export const OfferRoomDashboard = ({
     label: 'Open Messages',
     icon: MessageCircle,
     onClick: () => {
-      if (chatThreads.length > 0) openChat(String(chatThreads[0].otherUserId)); else chatsCardRef.current?.scrollIntoView({
+      const target = resolveChatTarget(chatThreads[0]?.otherUserId);
+      if (target) openChat(target); else chatsCardRef.current?.scrollIntoView({
         behavior: 'smooth',
         block: 'start'
       });
@@ -496,7 +504,7 @@ export const OfferRoomDashboard = ({
           <div className="bg-white rounded-3xl p-8 shadow-sm">
             <h2 className="text-2xl font-semibold text-gray-900 mb-1">Requests</h2>
             <p className="text-gray-500 mb-6">All incoming requests for your current listing.</p>
-            {!selectedRoomId ? <div className="text-sm text-gray-500">Select a listing to see requests.</div> : incomingLoading ? <div className="text-sm text-gray-500">Loading requests...</div> : incomingRequests.length === 0 ? <div className="text-sm text-gray-600 bg-gray-50 border border-gray-100 rounded-2xl p-4">No requests yet. Improve your listing to attract users.</div> : <div className="space-y-4">{incomingRequests.map(request => <IncomingRequestCard key={request._id} request={request} onAccept={() => handleAcceptRequest(String(request._id))} onReject={() => handleRejectRequest(String(request._id))} />)}</div>}
+            {!selectedRoomId ? <div className="text-sm text-gray-500">Select a listing to see requests.</div> : incomingLoading ? <div className="text-sm text-gray-500">Loading requests...</div> : incomingRequests.length === 0 ? <div className="text-sm text-gray-600 bg-gray-50 border border-gray-100 rounded-2xl p-4">No requests yet. Improve your listing to attract users.</div> : <div className="space-y-4">{incomingRequests.map(request => <IncomingRequestCard key={request._id} request={request} onAccept={() => handleAcceptRequest(request)} onReject={() => handleRejectRequest(String(request._id))} />)}</div>}
           </div>
 
           <div className="bg-white rounded-3xl p-8 shadow-sm">
@@ -515,7 +523,10 @@ export const OfferRoomDashboard = ({
           <div className="bg-white rounded-3xl p-8 shadow-sm">
             <h2 className="text-2xl font-semibold text-gray-900 mb-1">Messages</h2>
             <p className="text-gray-500 mb-6">Open a chat thread to talk with accepted users.</p>
-            {!selectedRoomId ? <div className="text-sm text-gray-500">Select a listing to see active chats.</div> : threadsLoading ? <div className="text-sm text-gray-500">Loading chats...</div> : chatThreads.length === 0 ? <div className="text-sm text-gray-600 bg-gray-50 border border-gray-100 rounded-2xl p-4">No active chats yet.</div> : <div className="space-y-4">{chatThreads.map(thread => <ChatThreadCard key={thread.otherUserId} thread={thread} onOpen={() => openChat(String(thread.otherUserId))} />)}</div>}
+            {!selectedRoomId ? <div className="text-sm text-gray-500">Select a listing to see active chats.</div> : threadsLoading ? <div className="text-sm text-gray-500">Loading chats...</div> : chatThreads.length === 0 ? <div className="text-sm text-gray-600 bg-gray-50 border border-gray-100 rounded-2xl p-4">No active chats yet.</div> : <div className="space-y-4">{chatThreads.map(thread => <ChatThreadCard key={thread.otherUserId} thread={thread} onOpen={() => {
+              const target = resolveChatTarget(thread.otherUserId);
+              if (target) openChat(target);
+            }} />)}</div>}
           </div>
 
           <div className="bg-white rounded-3xl p-8 shadow-sm">
@@ -618,7 +629,10 @@ export const OfferRoomDashboard = ({
               {!selectedRoomId ? <div className="text-sm text-gray-500">Select a listing to see active chats.</div> : threadsLoading ? <div className="text-sm text-gray-500">Loading chats...</div> : chatThreads.length === 0 ? <div className="text-sm text-gray-600 bg-gray-50 border border-gray-100 rounded-2xl p-4">
                 No active chats yet.
               </div> : <div className="space-y-4">
-                {chatThreads.map(thread => <ChatThreadCard key={thread.otherUserId} thread={thread} onOpen={() => openChat(String(thread.otherUserId))} />)}
+                {chatThreads.map(thread => <ChatThreadCard key={thread.otherUserId} thread={thread} onOpen={() => {
+                  const target = resolveChatTarget(thread.otherUserId);
+                  if (target) openChat(target);
+                }} />)}
               </div>}
             </div>
 

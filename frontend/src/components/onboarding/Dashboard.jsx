@@ -42,16 +42,22 @@ export const Dashboard = ({
   const explorePromptShownRef = useRef(false);
   const [roomDetailsOpen, setRoomDetailsOpen] = useState(false);
   const [roomDetailsRoom, setRoomDetailsRoom] = useState(null);
+    const normalizeUserId = (value) => {
+      if (!value) return '';
+      if (typeof value === 'string' || typeof value === 'number') return String(value);
+      if (typeof value === 'object') return String(value?._id || value?.id || '');
+      return '';
+    };
     const getCurrentUserId = () => {
       try {
         const raw = localStorage.getItem('rumi_user');
-        return raw ? String(JSON.parse(raw)?._id || '') : '';
+        return raw ? normalizeUserId(JSON.parse(raw)?._id) : '';
       } catch {
         return '';
       }
     };
     const resolveChatTarget = (candidate) => {
-      const target = candidate ? String(candidate) : '';
+      const target = normalizeUserId(candidate);
       const meId = getCurrentUserId();
       if (!target || target === meId) return null;
       return target;
@@ -385,9 +391,18 @@ export const Dashboard = ({
       setSwipeDirection(null);
       setIsLocked(false);
       
-      // Optional: background re-sync
-      reloadDashboard();
+      // Keep right-swipe progression smooth: avoid immediate re-fetch that can re-show the same card.
+      if (direction === 'left') {
+        reloadDashboard();
+      }
     }, 300); // matches duration: 0.3
+  };
+  const removeAcceptedUserFromUI = (request) => {
+    const acceptedUserId = String(request?.userId || '');
+    const acceptedRequestId = String(request?.requestId || '');
+
+    setRequestsReceived((prev) => prev.filter((item) => String(item?.requestId || '') !== acceptedRequestId));
+    setSwipeCards((prev) => prev.filter((card) => String(card?.userId || '') !== acceptedUserId));
   };
   const quickActions = [{
     icon: MessageCircle,
@@ -445,7 +460,7 @@ export const Dashboard = ({
     />
 
     {/* Main Content */}
-    <main className="flex-1 overflow-auto">
+    <main className={`flex-1 ${activeNav === 'messages' ? 'h-screen flex flex-col overflow-hidden' : 'overflow-auto'}`}>
       {/* Top Navigation Bar */}
       <header className="bg-white shadow-sm px-8 py-4 sticky top-0 z-10">
         <div className="flex items-center justify-between">
@@ -495,11 +510,11 @@ export const Dashboard = ({
       </header>
 
       {/* Dashboard Content */}
-      <div className="p-8">
+      <div className={activeNav === 'messages' ? 'flex-1 min-h-0' : 'p-8'}>
         {showLoginNotice && userEmail && <div className="mb-6 rounded-xl bg-emerald-50 border border-emerald-100 px-4 py-3 text-emerald-800 text-sm">
           Logged in as <span className="font-semibold">{userEmail}</span>
         </div>}
-        {activeNav === 'messages' ? <div className="w-full">
+        {activeNav === 'messages' ? <div className="w-full h-full">
           <ChatPage initialOtherUserId={chatWithUserId} />
         </div> : <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Main Column - Content switching (2/3 width) */}
@@ -529,9 +544,13 @@ export const Dashboard = ({
                         try {
                           setSending(true);
                           await acceptRequest({ requestId: request.requestId });
+                          removeAcceptedUserFromUI(request);
                           await reloadDashboard();
-                          setChatWithUserId(request.userId);
-                          setActiveNav('messages');
+                          const target = resolveChatTarget(request.userId);
+                          if (target) {
+                            setChatWithUserId(target);
+                            setActiveNav('messages');
+                          }
                         } finally {
                           setSending(false);
                         }
@@ -726,7 +745,13 @@ export const Dashboard = ({
                         await acceptRequest({
                           requestId: request.requestId
                         });
+                        removeAcceptedUserFromUI(request);
                         await reloadDashboard();
+                        const target = resolveChatTarget(request.userId);
+                        if (target) {
+                          setChatWithUserId(target);
+                          setActiveNav('messages');
+                        }
                       } finally {
                         setSending(false);
                       }

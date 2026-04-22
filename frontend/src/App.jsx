@@ -10,6 +10,7 @@ import { ProfileSetupFlow } from './components/onboarding/ProfileSetupFlow';
 import { FinalConfirmationScreen } from './components/onboarding/FinalConfirmationScreen';
 import { Dashboard } from './components/onboarding/Dashboard';
 import { getProfile, sendRagMessage } from './services/api';
+import { disconnectSocket } from './services/socket';
 
 // Font injection for Poppins
 
@@ -1649,9 +1650,12 @@ export default function App() {
         const res = await getProfile();
         const user = res?.data?.user;
         if (!user) throw new Error('Missing profile');
+        localStorage.setItem('rumi_user', JSON.stringify(user));
+        if (user?.email) setSignupEmail(user.email);
         const shouldShowDashboard = user?.profileCompleted || user?.intent === 'explore';
         if (shouldShowDashboard) setCurrentView('dashboard');else setCurrentView('profile');
       } catch (e) {
+        disconnectSocket();
         localStorage.removeItem('rumi_token');
         localStorage.removeItem('rumi_user');
         setSignupEmail('');
@@ -1667,6 +1671,7 @@ export default function App() {
         setProfileFlowMode('edit');
         setCurrentView('profile');
       }} onLogout={() => {
+        disconnectSocket();
         setSignupEmail('');
         localStorage.removeItem('rumi_token');
         localStorage.removeItem('rumi_user');
