@@ -1,28 +1,13 @@
 const path = require('path');
 const multer = require('multer');
 const User = require('../models/User');
-
-// Configured multer storage to save uploads to backend/uploads
-const uploadsDir = path.join(__dirname, '..', 'uploads');
 const fs = require('fs');
 
-// Ensuring uploads dir exists
+// Local Multer storage for profile photos is deprecated in favor of Cloudinary (see uploadController.js)
+const uploadsDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
-
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadsDir);
-  },
-  filename: function (req, file, cb) {
-    const ext = path.extname(file.originalname);
-    const base = Date.now() + '-' + Math.round(Math.random() * 1e9); // Generates a unique filename
-    cb(null, base + ext);
-  }
-});
-
-const upload = multer({ storage });
 
 /**
  * GET /user/profile
@@ -70,8 +55,8 @@ async function updateProfile(req, res) {
       updates.age = ageNum;
     }
 
-  //returns updated user and still checks validators
-  const user = await User.findByIdAndUpdate(req.userId, { $set: updates }, { returnDocument: 'after', runValidators: true }).select('-passwordHash');
+    //returns updated user and still checks validators
+    const user = await User.findByIdAndUpdate(req.userId, { $set: updates }, { returnDocument: 'after', runValidators: true }).select('-passwordHash');
     if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
     return res.json({ success: true, user: user.toObject() }); //toObject() is used to convert the Mongoose document to a plain JS object
   } catch (err) {
@@ -81,28 +66,16 @@ async function updateProfile(req, res) {
 }
 
 /**
- * POST /user/profile/photo
+ * Obsolete handler - Profile photos now handled via Cloudinary headless uploader
  */
 async function uploadProfilePhotoHandler(req, res) {
-  try {
-    if (!req.file || !req.file.filename) {
-      return res.status(400).json({ success: false, message: 'No image file provided.' });
-    }
-    const photoPath = '/uploads/' + req.file.filename;
- 
-  const user = await User.findByIdAndUpdate(req.userId, { $set: { photo: photoPath, profilePicture: photoPath } }, { returnDocument: 'after' }).select('-passwordHash');
-    if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
-    return res.json({ success: true, user: user.toObject() });
-  } catch (err) {
-    console.error('uploadProfilePhoto error:', err);
-    return res.status(500).json({ success: false, message: err.message || 'Server error.' });
-  }
+  return res.status(410).json({ success: false, message: 'This endpoint is deprecated. Use Cloudinary upload.' });
 }
 
 module.exports = {
   getProfile,
   updateProfile,
-  uploadMiddleware: upload.single('photo'),
+  uploadMiddleware: (req, res, next) => next(), // No-op middleware since we moved to uploadController
   uploadProfilePhotoHandler
 };
 

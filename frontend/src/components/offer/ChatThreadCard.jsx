@@ -1,5 +1,6 @@
 import React from 'react';
 import { MessageCircle } from 'lucide-react';
+import { Avatar } from '../common/Avatar';
 export const ChatThreadCard = ({
   thread,
   onOpen
@@ -10,7 +11,7 @@ export const ChatThreadCard = ({
   }} className="border border-gray-100 rounded-2xl p-4 bg-white cursor-pointer hover:shadow-sm transition-shadow">
       <div className="flex items-start gap-3">
         <div className="relative w-12 h-12">
-          <img src={avatar || 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=100&q=80'} alt={thread?.name || 'User'} className="w-12 h-12 rounded-full object-cover bg-slate-100" />
+          <Avatar src={avatar} alt={thread?.name || 'User'} className="w-12 h-12 rounded-full" />
           {Number(thread?.unreadCount ?? 0) > 0 && <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-[10px] rounded-full px-2 py-1">
               {thread.unreadCount}
             </span>}

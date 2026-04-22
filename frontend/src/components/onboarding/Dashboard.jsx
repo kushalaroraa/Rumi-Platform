@@ -2,11 +2,17 @@ import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { Home, Search, Heart, MessageCircle, User, Settings, LogOut, Bell, Users, DollarSign, Sparkles, BarChart3, Target, X, Edit, Send, Clock, Check, XCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from '../ui/dropdown-menu';
-import { getMatches, getReceivedRequests, getReceivedAcceptedRequests, getSentRequests, sendRequest, passRequest, acceptRequest, rejectRequest, getChatHistory, getProfile, getRecommendedRooms } from '../../services/api';
+import { getMatches, getReceivedRequests, getReceivedAcceptedRequests, getSentRequests, sendRequest, passRequest, acceptRequest, rejectRequest, getChatHistory, getProfile, getRecommendedRooms, normalizeImageUrl } from '../../services/api';
 import { API_BASE_URL } from '../../services/api';
 import { RecommendedRoomsSection } from '../explore/RecommendedRoomsSection';
 import { RoomDetailsModal } from '../explore/RoomDetailsModal';
 import { OfferRoomDashboard } from '../offer/OfferRoomDashboard';
+import { Sidebar } from '../layout/Sidebar';
+import UserProfile from '../../pages/UserProfile';
+import SettingsPage from '../../pages/Settings';
+import MessageWidget from '../../pages/MessageWidget';
+import { Avatar } from '../common/Avatar';
+
 export const Dashboard = ({
   onLogout,
   userEmail,
@@ -36,13 +42,12 @@ export const Dashboard = ({
   const explorePromptShownRef = useRef(false);
   const [roomDetailsOpen, setRoomDetailsOpen] = useState(false);
   const [roomDetailsRoom, setRoomDetailsRoom] = useState(null);
-  const normalizeImageUrl = src => {
-    if (!src) return '';
-    const str = String(src);
-    if (str.startsWith('http://') || str.startsWith('https://')) return str;
-    if (str.startsWith('/')) return `${API_BASE_URL}${str}`;
-    return `${API_BASE_URL}/${str}`;
-  };
+  
+  // Swipe & Animation state
+  const [isLocked, setIsLocked] = useState(false);
+  const [animatingId, setAnimatingId] = useState(null);
+  const [swipeDirection, setSwipeDirection] = useState(null);
+
   const avgMatchScore = useMemo(() => {
     if (!swipeCards.length) return 0;
     const total = swipeCards.reduce((s, c) => s + (Number(c.match) || 0), 0);
@@ -88,13 +93,36 @@ export const Dashboard = ({
     }
     setLoading(true);
     try {
-      const [matchesRes, receivedRes, sentRes, receivedAcceptedRes] = await Promise.all([getMatches({
-        limit: 20
-      }), getReceivedRequests(), getSentRequests(), getReceivedAcceptedRequests()]);
+      // Use individual try-catch or settled promises to prevent one failure from breaking everything
+      const matchesPromise = getMatches({ limit: 20 }).catch(e => {
+        console.error('getMatches error', e);
+        return { data: { matches: [] } };
+      });
+      const receivedPromise = getReceivedRequests().catch(e => {
+        console.error('getReceivedRequests error', e);
+        return { data: { requests: [] } };
+      });
+      const sentPromise = getSentRequests().catch(e => {
+        console.error('getSentRequests error', e);
+        return { data: { requests: [] } };
+      });
+      const receivedAcceptedPromise = getReceivedAcceptedRequests().catch(e => {
+        console.error('getReceivedAcceptedRequests error', e);
+        return { data: { requests: [] } };
+      });
+
+      const [matchesRes, receivedRes, sentRes, receivedAcceptedRes] = await Promise.all([
+        matchesPromise,
+        receivedPromise,
+        sentPromise,
+        receivedAcceptedPromise
+      ]);
+
       const matches = matchesRes?.data?.matches || [];
       const received = receivedRes?.data?.requests || [];
       const sent = sentRes?.data?.requests || [];
       const receivedAccepted = receivedAcceptedRes?.data?.requests || [];
+
       const mappedSwipe = matches.map(m => {
         const u = m.user || m;
         const budgetDisplay = budgetToDisplay(u?.budgetRange);
@@ -115,25 +143,27 @@ export const Dashboard = ({
           budget: budgetDisplay
         };
       });
+
       const mappedReceived = received.map(r => {
         const u = r.fromUserId || {};
         return {
           id: r._id,
           name: u.name,
           age: u.age ?? '',
-          image: u.photo || u.profilePicture || 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop',
+          image: normalizeImageUrl(u.photo || u.profilePicture),
           match: r.matchScore ?? r.match ?? 0,
           userId: u._id,
           requestId: r._id
         };
       });
+
       const mappedSent = sent.map(r => {
         const u = r.toUserId || {};
         return {
           id: r._id,
           name: u.name,
           age: u.age ?? '',
-          image: u.photo || u.profilePicture || 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop',
+          image: normalizeImageUrl(u.photo || u.profilePicture),
           match: r.matchScore ?? r.match ?? 0,
           status: r.status,
           userId: u._id,
@@ -141,7 +171,6 @@ export const Dashboard = ({
         };
       });
 
-      // Active matches = accepted connections regardless of direction
       const activeMap = new Map();
       mappedSent.filter(r => r.status === 'accepted').forEach(r => activeMap.set(r.userId, r));
       receivedAccepted.forEach(r => {
@@ -150,22 +179,17 @@ export const Dashboard = ({
           id: r._id,
           name: u.name,
           match: r.matchScore ?? r.match ?? 0,
-          image: u.photo || u.profilePicture || 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&h=200&fit=crop',
+          image: normalizeImageUrl(u.photo || u.profilePicture),
           userId: u._id
         });
       });
+
       setSwipeCards(mappedSwipe);
       setRequestsReceived(mappedReceived);
       setSentRequests(mappedSent);
       setActiveMatches(Array.from(activeMap.values()));
     } catch (e) {
-      // Keep UI stable; just show empty cards.
-      setSwipeCards([]);
-      setRequestsReceived([]);
-      setSentRequests([]);
-      setActiveMatches([]);
-      // eslint-disable-next-line no-console
-      console.error('reloadDashboard error', e);
+      console.error('reloadDashboard critical error', e);
     } finally {
       setLoading(false);
     }
@@ -285,21 +309,35 @@ export const Dashboard = ({
   }, [activeNav, chatWithUserId]);
   const handleSwipe = async direction => {
     const top = swipeCards[0];
-    if (!top || sending) return;
-    setSending(true);
+    if (!top || isLocked) return;
+
+    // 1. Lock and trigger animation immediately
+    setIsLocked(true);
+    setAnimatingId(top.id);
+    setSwipeDirection(direction);
+
+    // 2. Start backend sync independently
     try {
       if (direction === 'left') {
-        await passRequest(top.userId);
+        passRequest(top.userId).catch(e => console.error('passRequest error', e));
       } else {
-        await sendRequest(top.userId);
+        sendRequest(top.userId).catch(e => console.error('sendRequest error', e));
       }
-      await reloadDashboard();
     } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('handleSwipe error', e);
-    } finally {
-      setSending(false);
+      console.error('handleSwipe backend start error', e);
     }
+
+    // 3. Wait for animation to finish before updating state
+    setTimeout(() => {
+      setSwipeCards(prev => prev.filter(c => c.id !== top.id));
+      // Reset animation keys
+      setAnimatingId(null);
+      setSwipeDirection(null);
+      setIsLocked(false);
+      
+      // Optional: background re-sync
+      reloadDashboard();
+    }, 300); // matches duration: 0.3
   };
   const quickActions = [{
     icon: MessageCircle,
@@ -316,159 +354,110 @@ export const Dashboard = ({
   }];
   if (!intentResolved) {
     return <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="text-gray-500">Loading dashboard...</div>
-      </div>;
+      <div className="text-gray-500">Loading dashboard...</div>
+    </div>;
   }
   if (renderOfferDashboard) {
     return <OfferRoomDashboard onLogout={onLogout} userEmail={userEmail} onEditProfile={onEditProfile} />;
   }
-  return <div className="min-h-screen bg-gray-100 flex">
-      {/* Sidebar */}
-      <aside className="w-64 bg-white shadow-sm flex flex-col">
-        {/* Logo */}
-        <div className="p-6 flex items-center gap-2">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-            <Home size={18} className="text-white" />
+  const seekerNavItems = [
+    { id: 'dashboard', label: 'Discover Matches', icon: Home },
+    { id: 'messages', label: 'Messages', icon: MessageCircle },
+    { id: 'profile', label: 'Profile', icon: User },
+    { id: 'settings', label: 'Settings', icon: Settings },
+  ];
+
+  return <div className="min-h-screen bg-gray-100 flex h-screen overflow-hidden">
+    <Sidebar
+      items={seekerNavItems}
+      activeNav={activeNav}
+      onNavChange={setActiveNav}
+      onLogout={onLogout}
+    />
+
+    {/* Main Content */}
+    <main className="flex-1 overflow-auto">
+      {/* Top Navigation Bar */}
+      <header className="bg-white shadow-sm px-8 py-4 sticky top-0 z-10">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
+
+          <div className="flex items-center gap-4">
+            {/* Search */}
+            <div className="relative">
+              <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input type="text" placeholder="Search matches, locations, preferences" className="pl-10 pr-4 py-2 bg-gray-100 border-0 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-80" />
+            </div>
+
+            {/* Icons */}
+            <button className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200 transition-colors relative">
+              <Bell size={20} />
+              <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
+            </button>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="w-10 h-10 rounded-full overflow-hidden focus:outline-none">
+                  <Avatar src={avatarSrc} alt="Profile" className="w-full h-full" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-72 bg-white text-gray-900 border border-gray-200 rounded-xl shadow-lg p-1 z-[100]">
+                <DropdownMenuLabel className="flex flex-col gap-1">
+                  <span className="text-sm font-semibold text-gray-900">Account</span>
+                  <span className="text-xs text-gray-500 truncate">
+                    {userEmail || 'Signed in'}
+                  </span>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => onEditProfile?.()} className="gap-2">
+                  <User size={16} /> Edit Profile
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setActiveNav('settings')} className="gap-2">
+                  <Settings size={16} /> Settings
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={onLogout} className="gap-2 text-red-600">
+                  <LogOut size={16} /> Logout
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
-          <span className="text-xl font-semibold text-gray-900">Rumi</span>
         </div>
+      </header>
 
-        {/* Navigation */}
-        <nav className="flex-1 px-4 py-2">
-          <button onClick={() => setActiveNav('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-2 transition-colors ${activeNav === 'dashboard' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-            <Home size={20} />
-            <span>Dashboard</span>
-          </button>
+      {/* Dashboard Content */}
+      <div className="p-8">
+        {showLoginNotice && userEmail && <div className="mb-6 rounded-xl bg-emerald-50 border border-emerald-100 px-4 py-3 text-emerald-800 text-sm">
+          Logged in as <span className="font-semibold">{userEmail}</span>
+        </div>}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Main Column - Content switching (2/3 width) */}
+          <div className="lg:col-span-2">
+            {activeNav === 'profile' && <UserProfile />}
+            {activeNav === 'settings' && <SettingsPage />}
 
-          <button onClick={() => setActiveNav('discover')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-2 transition-colors ${activeNav === 'discover' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-            <Search size={20} />
-            <span>Discover Matches</span>
-          </button>
-
-          <button onClick={() => setActiveNav('matches')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-2 transition-colors ${activeNav === 'matches' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-            <Heart size={20} />
-            <span>My Matches</span>
-          </button>
-
-          <button onClick={() => setActiveNav('messages')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-2 transition-colors ${activeNav === 'messages' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-            <MessageCircle size={20} />
-            <span>Messages</span>
-          </button>
-
-          <button onClick={() => setActiveNav('activity')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-2 transition-colors ${activeNav === 'activity' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-            <BarChart3 size={20} />
-            <span>Activity & Stats</span>
-          </button>
-
-          <button onClick={() => setActiveNav('profile')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-2 transition-colors ${activeNav === 'profile' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-            <User size={20} />
-            <span>Profile</span>
-          </button>
-
-          <button onClick={() => setActiveNav('settings')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-2 transition-colors ${activeNav === 'settings' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-            <Settings size={20} />
-            <span>Settings</span>
-          </button>
-        </nav>
-
-        {/* AI Assistant Card */}
-        <div className="mx-4 mb-4 p-4 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl text-white">
-          <div className="flex items-center gap-2 mb-2">
-            <Sparkles size={16} />
-            <span className="text-sm font-semibold">AI in action</span>
-          </div>
-          <p className="text-xs leading-relaxed opacity-90">
-            Find your perfect match! Explore and complete new matches with higher precision.
-          </p>
-        </div>
-
-        {/* Logout */}
-        <button onClick={onLogout} className="mx-4 mb-6 flex items-center gap-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-xl transition-colors">
-          <LogOut size={20} />
-          <span>Logout</span>
-        </button>
-      </aside>
-
-      {/* Main Content */}
-      <main className="flex-1 overflow-auto">
-        {/* Top Navigation Bar */}
-        <header className="bg-white shadow-sm px-8 py-4 sticky top-0 z-10">
-          <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
-
-            <div className="flex items-center gap-4">
-              {/* Search */}
-              <div className="relative">
-                <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input type="text" placeholder="Search matches, locations, preferences" className="pl-10 pr-4 py-2 bg-gray-100 border-0 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-80" />
+            {activeNav === 'dashboard' && <div className="bg-white rounded-3xl p-8 shadow-sm">
+              <div className="mb-6">
+                {isExploreLocked && !revealExploreMatches ? <>
+                  <h2 className="text-2xl font-semibold text-gray-900 mb-1">
+                    Here are rooms you might like
+                  </h2>
+                  <p className="text-gray-500">
+                    Complete your profile to unlock matching.
+                  </p>
+                </> : <>
+                  <h2 className="text-2xl font-semibold text-gray-900 mb-1">Discover Matches</h2>
+                  <p className="text-gray-500">Swipe right to connect, left to pass.</p>
+                </>}
               </div>
 
-              {/* Icons */}
-              <button className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200 transition-colors relative">
-                <Bell size={20} />
-                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
-              </button>
-
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button className="w-10 h-10 rounded-full overflow-hidden focus:outline-none">
-                    <img src={avatarSrc || "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=100&q=80"} alt="Profile" className="w-full h-full object-cover" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-72 bg-white text-gray-900 border border-gray-200 rounded-xl shadow-lg p-1 z-[100]">
-                  <DropdownMenuLabel className="flex flex-col gap-1">
-                    <span className="text-sm font-semibold text-gray-900">Account</span>
-                    <span className="text-xs text-gray-500 truncate">
-                      {userEmail || 'Signed in'}
-                    </span>
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={() => onEditProfile?.()} className="gap-2">
-                    <User size={16} /> Edit Profile
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setActiveNav('settings')} className="gap-2">
-                    <Settings size={16} /> Settings
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={onLogout} className="gap-2 text-red-600">
-                    <LogOut size={16} /> Logout
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </div>
-        </header>
-
-        {/* Dashboard Content */}
-        <div className="p-8">
-          {showLoginNotice && userEmail && <div className="mb-6 rounded-xl bg-emerald-50 border border-emerald-100 px-4 py-3 text-emerald-800 text-sm">
-              Logged in as <span className="font-semibold">{userEmail}</span>
-            </div>}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Main Column - Discover Matches (2/3 width) */}
-            <div className="lg:col-span-2">
-              <div className="bg-white rounded-3xl p-8 shadow-sm">
-                <div className="mb-6">
-                  {isExploreLocked && !revealExploreMatches ? <>
-                      <h2 className="text-2xl font-semibold text-gray-900 mb-1">
-                        Here are rooms you might like
-                      </h2>
-                      <p className="text-gray-500">
-                        Complete your profile to unlock matching.
-                      </p>
-                    </> : <>
-                      <h2 className="text-2xl font-semibold text-gray-900 mb-1">Discover Matches</h2>
-                      <p className="text-gray-500">Swipe right to connect, left to pass.</p>
-                    </>}
-                </div>
-
-                {/* Swipe Card Stack */}
-                  {(!isExploreLocked || revealExploreMatches) && <div className="relative h-[600px] flex items-center justify-center">
-                      <AnimatePresence>
-                        {loading ? <div className="text-center text-gray-400">
-                            <Users size={64} className="mx-auto mb-4 opacity-50" />
-                            <p className="text-lg">Loading matches…</p>
-                          </div> : swipeCards.length > 0 ? swipeCards.map((card, index) => index < 3 && <motion.div key={card.id} className="absolute w-full max-w-md" style={{
+              {/* Swipe Card Stack */}
+              {(!isExploreLocked || revealExploreMatches) && <div className="relative h-[600px] flex items-center justify-center">
+                <AnimatePresence>
+                  {loading ? <div className="text-center text-gray-400">
+                    <Users size={64} className="mx-auto mb-4 opacity-50" />
+                    <p className="text-lg">Loading matches…</p>
+                  </div> : swipeCards.length > 0 ? swipeCards.map((card, index) => index < 3 && <motion.div key={card.id} className="absolute w-full max-w-md" style={{
                     zIndex: swipeCards.length - index
                   }} initial={index === 0 ? {
                     scale: 1,
@@ -482,47 +471,50 @@ export const Dashboard = ({
                     scale: 1 - index * 0.05,
                     y: index * 10,
                     opacity: 1 - index * 0.3
-                  }} exit={{
-                    x: 1000,
+                  }} exit={animatingId === card.id ? {
+                    x: swipeDirection === 'left' ? -1000 : 1000,
                     opacity: 0,
-                    rotate: 45
+                    rotate: swipeDirection === 'left' ? -20 : 20
+                  } : {
+                    opacity: 0,
+                    scale: 0.9 // Subtle fade-out for non-swiped cards during reload
                   }} transition={{
                     duration: 0.3
                   }}>
-                                <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-gray-100">
-                                  {/* Profile Image */}
-                                  <div className="relative h-80">
-                                    <img src={card.image} alt={card.name} className="w-full h-full object-cover" />
-                                    {/* Match Badge */}
-                                    <div className="absolute top-4 right-4 bg-emerald-500 text-white px-4 py-2 rounded-full font-semibold text-sm shadow-lg">
-                                      {card.match}% Match
-                                    </div>
-                                  </div>
+                    <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-gray-100">
+                      {/* Profile Image */}
+                      <div className="relative h-80">
+                        <Avatar src={card.image} alt={card.name} className="w-full h-full" />
+                        {/* Match Badge */}
+                        <div className="absolute top-4 right-4 bg-emerald-500 text-white px-4 py-2 rounded-full font-semibold text-sm shadow-lg">
+                          {card.match}% Match
+                        </div>
+                      </div>
 
-                                  {/* Profile Details */}
-                                  <div className="p-6">
-                                    <h3 className="text-2xl font-semibold text-gray-900 mb-1">
-                                      {card.name}, {card.age}
-                                    </h3>
-                                    <p className="text-gray-600 mb-4 leading-relaxed">
-                                      {card.bio}
-                                    </p>
+                      {/* Profile Details */}
+                      <div className="p-6">
+                        <h3 className="text-2xl font-semibold text-gray-900 mb-1">
+                          {card.name}, {card.age}
+                        </h3>
+                        <p className="text-gray-600 mb-4 leading-relaxed">
+                          {card.bio}
+                        </p>
 
-                                    {/* Lifestyle Tags */}
-                                    <div className="flex flex-wrap gap-2 mb-4">
-                                      {card.tags.map((tag, i) => <span key={i} className="px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-sm font-medium">
-                                          {tag}
-                                        </span>)}
-                                    </div>
+                        {/* Lifestyle Tags */}
+                        <div className="flex flex-wrap gap-2 mb-4">
+                          {card.tags.map((tag, i) => <span key={i} className="px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-sm font-medium">
+                            {tag}
+                          </span>)}
+                        </div>
 
-                                    {/* Budget */}
-                                    <div className="flex items-center gap-2 text-gray-700">
-                                      <DollarSign size={20} className="text-blue-600" />
-                                      <span className="font-semibold">Budget: ₹{card.budget}k/month</span>
-                                    </div>
+                        {/* Budget */}
+                        <div className="flex items-center gap-2 text-gray-700">
+                          <DollarSign size={20} className="text-blue-600" />
+                          <span className="font-semibold">Budget: ₹{card.budget}k/month</span>
+                        </div>
 
-                                  {/* Offerer room details */}
-                                  {card.hasRoom && (() => {
+                        {/* Offerer room details */}
+                        {card.hasRoom && (() => {
                           const offerRoom = recommendedRooms?.find(r => String(r?.ownerUserId) === String(card.userId)) || null;
                           if (!offerRoom) return null;
                           return <button type="button" onClick={e => {
@@ -530,89 +522,67 @@ export const Dashboard = ({
                             setRoomDetailsRoom(offerRoom);
                             setRoomDetailsOpen(true);
                           }} className="mt-4 w-full px-3 py-2 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors">
-                                        View room details
-                                      </button>;
+                            View room details
+                          </button>;
                         })()}
-                                  </div>
-                                </div>
-                              </motion.div>) : <div className="text-center text-gray-400">
-                            <Users size={64} className="mx-auto mb-4 opacity-50" />
-                            <p className="text-lg">No more profiles to show</p>
-                            <p className="text-sm">Check back later for new matches!</p>
-                          </div>}
-                      </AnimatePresence>
-                    </div>}
-
-                {/* Action Buttons */}
-                {(!isExploreLocked || revealExploreMatches) && !showExploreProfileModal && swipeCards.length > 0 && <div className="flex items-center justify-center gap-6 mt-8">
-                    <button onClick={() => handleSwipe('left')} disabled={sending || loading} className="w-16 h-16 bg-red-50 hover:bg-red-100 rounded-full flex items-center justify-center text-red-500 transition-all hover:scale-110 shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
-                      <X size={32} strokeWidth={2.5} />
-                    </button>
-                    <button onClick={() => handleSwipe('right')} disabled={sending || loading} className="w-16 h-16 bg-emerald-50 hover:bg-emerald-100 rounded-full flex items-center justify-center text-emerald-500 transition-all hover:scale-110 shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
-                      <Heart size={32} strokeWidth={2.5} />
-                    </button>
-                  </div>}
-
-                {/* Recommended Rooms */}
-                <RecommendedRoomsSection rooms={recommendedRooms} loading={roomsLoading} title="Recommended Rooms" />
-              </div>
-            </div>
-
-            {/* Right Column - Side Widgets */}
-            <div className="space-y-6">
-              {/* Messages (activeTab) */}
-              {activeNav === 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
-                  <div className="flex items-center justify-between gap-4 mb-4">
-                    <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-                      <MessageCircle size={20} className="text-blue-600" />
-                      Messages
-                    </h3>
-                    <button type="button" onClick={() => {
-                  setActiveNav('dashboard');
-                  setChatWithUserId(null);
-                  setChatMessages([]);
-                }} className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm transition-colors">
-                    Back
-                    </button>
-                  </div>
-
-                  <div className="space-y-3 max-h-[320px] overflow-auto pr-2">
-                    {chatLoading ? <p className="text-sm text-gray-500">Loading messages...</p> : chatWithUserId ? chatMessages.length ? chatMessages.map(m => <div key={m._id} className={`flex ${m.isOwn ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`max-w-[80%] p-3 rounded-2xl text-sm ${m.isOwn ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-900'}`}>
-                              <div className="font-medium mb-1 text-xs opacity-90">
-                                {m.isOwn ? 'You' : m.senderId?.name || 'User'}
-                              </div>
-                              <div className="whitespace-pre-wrap">{m.message}</div>
-                            </div>
-                          </div>) : <p className="text-sm text-gray-500">No messages yet.</p> : <p className="text-sm text-gray-500">Select an active match to view messages.</p>}
-                  </div>
-
-                  <div className="mt-4">
-                    <input disabled value="Messaging sending is not enabled in this design build." className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-500" />
-                  </div>
-                </div>}
-
-              {/* Requests Received */}
-              {activeNav !== 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
-                <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                  <Heart size={20} className="text-blue-600" />
-                  Requests Received
-                </h3>
-                <div className="space-y-4">
-                  {requestsReceived.map(request => <div key={request.id} className="space-y-3">
-                      <div className="flex items-center gap-3">
-                        <img src={request.image} alt={request.name} className="w-12 h-12 rounded-full object-cover" />
-                        <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-gray-900 text-sm">
-                            {request.name}, {request.age}
-                          </p>
-                          <p className="text-xs text-emerald-600 font-medium">
-                            {request.match}% Match
-                          </p>
-                        </div>
                       </div>
-                      <div className="flex gap-2">
-                        <button type="button" onClick={async () => {
+                    </div>
+                  </motion.div>) : <div className="text-center text-gray-400">
+                    <Users size={64} className="mx-auto mb-4 opacity-50" />
+                    <p className="text-lg">No more profiles to show</p>
+                    <p className="text-sm">Check back later for new matches!</p>
+                  </div>}
+                </AnimatePresence>
+              </div>}
+
+              {/* Action Buttons */}
+              {(!isExploreLocked || revealExploreMatches) && !showExploreProfileModal && swipeCards.length > 0 && <div className="flex items-center justify-center gap-6 mt-8">
+                <button onClick={() => handleSwipe('left')} disabled={isLocked || loading} className="w-16 h-16 bg-red-50 hover:bg-red-100 rounded-full flex items-center justify-center text-red-500 transition-all hover:scale-110 shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
+                  <X size={32} strokeWidth={2.5} />
+                </button>
+                <button onClick={() => handleSwipe('right')} disabled={isLocked || loading} className="w-16 h-16 bg-emerald-50 hover:bg-emerald-100 rounded-full flex items-center justify-center text-emerald-500 transition-all hover:scale-110 shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
+                  <Heart size={32} strokeWidth={2.5} />
+                </button>
+              </div>}
+
+              {/* Recommended Rooms */}
+              <RecommendedRoomsSection rooms={recommendedRooms} loading={roomsLoading} title="Recommended Rooms" />
+            </div>}
+          </div>
+
+          {/* Right Column - Side Widgets */}
+          <div className="space-y-6">
+            <MessageWidget
+              activeNav={activeNav}
+              setActiveNav={setActiveNav}
+              chatLoading={chatLoading}
+              chatWithUserId={chatWithUserId}
+              chatMessages={chatMessages}
+              setChatWithUserId={setChatWithUserId}
+              setChatMessages={setChatMessages}
+            />
+
+            {/* Requests Received */}
+            {activeNav !== 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
+              <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <Heart size={20} className="text-blue-600" />
+                Requests Received
+              </h3>
+              <div className="space-y-4">
+                {requestsReceived.map(request => <div key={request.id} className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <Avatar src={request.image} alt={request.name} className="w-12 h-12 rounded-full" />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-gray-900 text-sm">
+                        {request.name}, {request.age}
+                      </p>
+                      <p className="text-xs text-emerald-600 font-medium">
+                        {request.match}% Match
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={async () => {
                       try {
                         setSending(true);
                         await acceptRequest({
@@ -623,9 +593,9 @@ export const Dashboard = ({
                         setSending(false);
                       }
                     }} disabled={sending} className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50">
-                          Accept & Chat
-                        </button>
-                        <button type="button" onClick={async () => {
+                      Accept & Chat
+                    </button>
+                    <button type="button" onClick={async () => {
                       try {
                         setSending(true);
                         await rejectRequest({
@@ -636,134 +606,134 @@ export const Dashboard = ({
                         setSending(false);
                       }
                     }} disabled={sending} className="flex-1 px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors disabled:opacity-50">
-                          Reject
-                        </button>
-                      </div>
-                    </div>)}
-                </div>
-              </div>}
+                      Reject
+                    </button>
+                  </div>
+                </div>)}
+              </div>
+            </div>}
 
-              {/* Sent Requests */}
-              {activeNav !== 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
-                <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                  <Send size={20} className="text-blue-600" />
-                  Sent Requests
-                </h3>
-                <div className="space-y-3">
-                  {sentRequests.map(request => <div key={request.id} className="flex items-center gap-3">
-                      <img src={request.image} alt={request.name} className="w-10 h-10 rounded-full object-cover" />
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-gray-900 text-sm truncate">
-                          {request.name}, {request.age}
-                        </p>
-                        <p className="text-xs text-gray-500">{request.match}% Match</p>
-                      </div>
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${request.status === 'pending' ? 'bg-yellow-50 text-yellow-600' : request.status === 'accepted' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
-                        {request.status === 'pending' && <Clock size={12} className="inline mr-1" />}
-                        {request.status === 'accepted' && <Check size={12} className="inline mr-1" />}
-                        {request.status === 'rejected' && <XCircle size={12} className="inline mr-1" />}
-                        {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
-                      </span>
-                    </div>)}
-                </div>
-              </div>}
+            {/* Sent Requests */}
+            {activeNav !== 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
+              <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <Send size={20} className="text-blue-600" />
+                Sent Requests
+              </h3>
+              <div className="space-y-3">
+                {sentRequests.map(request => <div key={request.id} className="flex items-center gap-3">
+                  <Avatar src={request.image} alt={request.name} className="w-10 h-10 rounded-full" />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-gray-900 text-sm truncate">
+                      {request.name}, {request.age}
+                    </p>
+                    <p className="text-xs text-gray-500">{request.match}% Match</p>
+                  </div>
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${request.status === 'pending' ? 'bg-yellow-50 text-yellow-600' : request.status === 'accepted' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                    {request.status === 'pending' && <Clock size={12} className="inline mr-1" />}
+                    {request.status === 'accepted' && <Check size={12} className="inline mr-1" />}
+                    {request.status === 'rejected' && <XCircle size={12} className="inline mr-1" />}
+                    {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                  </span>
+                </div>)}
+              </div>
+            </div>}
 
-              {/* Active Matches */}
-              {activeNav !== 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
-                <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                  <Users size={20} className="text-blue-600" />
-                  Active Matches
-                </h3>
-                <div className="space-y-3">
-                  {activeMatches.map(match => <div key={match.id} className="flex items-center gap-3">
-                      <img src={match.image} alt={match.name} className="w-10 h-10 rounded-full object-cover" />
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-gray-900 text-sm truncate">
-                          {match.name}
-                        </p>
-                        <p className="text-xs text-emerald-600 font-medium">{match.match}% Match</p>
-                      </div>
-                      <button type="button" onClick={() => {
+            {/* Active Matches */}
+            {activeNav !== 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
+              <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <Users size={20} className="text-blue-600" />
+                Active Matches
+              </h3>
+              <div className="space-y-3">
+                {activeMatches.map(match => <div key={match.id} className="flex items-center gap-3">
+                  <Avatar src={match.image} alt={match.name} className="w-10 h-10 rounded-full" />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-gray-900 text-sm truncate">
+                      {match.name}
+                    </p>
+                    <p className="text-xs text-emerald-600 font-medium">{match.match}% Match</p>
+                  </div>
+                  <button type="button" onClick={() => {
                     setChatWithUserId(match.userId ?? match.id);
                     setActiveNav('messages');
                   }} className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white hover:bg-blue-700 transition-colors">
-                        <MessageCircle size={16} />
-                      </button>
-                    </div>)}
-                </div>
-              </div>}
+                    <MessageCircle size={16} />
+                  </button>
+                </div>)}
+              </div>
+            </div>}
 
-              {/* Quick Actions */}
-              {activeNav !== 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
-                <h3 className="font-semibold text-gray-900 mb-4">Quick Actions</h3>
-                <div className="space-y-2">
-                  {quickActions.map((action, index) => {
+            {/* Quick Actions */}
+            {activeNav !== 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
+              <h3 className="font-semibold text-gray-900 mb-4">Quick Actions</h3>
+              <div className="space-y-2">
+                {quickActions.map((action, index) => {
                   const Icon = action.icon;
                   return <button key={index} className="w-full flex items-center gap-3 p-3 bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors">
-                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${action.color === 'blue' ? 'bg-blue-100 text-blue-600' : action.color === 'purple' ? 'bg-purple-100 text-purple-600' : 'bg-emerald-100 text-emerald-600'}`}>
-                          <Icon size={20} />
-                        </div>
-                        <span className="text-sm font-medium text-gray-700">{action.label}</span>
-                      </button>;
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${action.color === 'blue' ? 'bg-blue-100 text-blue-600' : action.color === 'purple' ? 'bg-purple-100 text-purple-600' : 'bg-emerald-100 text-emerald-600'}`}>
+                      <Icon size={20} />
+                    </div>
+                    <span className="text-sm font-medium text-gray-700">{action.label}</span>
+                  </button>;
                 })}
-                </div>
-              </div>}
+              </div>
+            </div>}
 
-              {/* Compatibility Insights */}
-              {activeNav !== 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
-                <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                  <Target size={20} className="text-blue-600" />
-                  Compatibility Insights
-                </h3>
-                <div className="space-y-4">
-                  <div className="text-center">
-                    <div className="relative inline-flex items-center justify-center w-24 h-24 mb-2">
-                      <svg className="w-full h-full -rotate-90">
-                        <circle cx="48" cy="48" r="40" stroke="#E5E7EB" strokeWidth="8" fill="none" />
-                        <circle cx="48" cy="48" r="40" stroke="#3B82F6" strokeWidth="8" fill="none" strokeDasharray={`${2 * Math.PI * 40}`} strokeDashoffset={`${2 * Math.PI * 40 * (1 - (avgMatchScore / 100 || 0))}`} strokeLinecap="round" />
-                      </svg>
-                      <span className="absolute text-2xl font-bold text-gray-900">{avgMatchScore}%</span>
-                    </div>
-                    <p className="text-sm text-gray-600">Average Match Score</p>
+            {/* Compatibility Insights */}
+            {activeNav !== 'messages' && <div className="bg-white rounded-2xl p-6 shadow-sm">
+              <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <Target size={20} className="text-blue-600" />
+                Compatibility Insights
+              </h3>
+              <div className="space-y-4">
+                <div className="text-center">
+                  <div className="relative inline-flex items-center justify-center w-24 h-24 mb-2">
+                    <svg className="w-full h-full -rotate-90">
+                      <circle cx="48" cy="48" r="40" stroke="#E5E7EB" strokeWidth="8" fill="none" />
+                      <circle cx="48" cy="48" r="40" stroke="#3B82F6" strokeWidth="8" fill="none" strokeDasharray={`${2 * Math.PI * 40}`} strokeDashoffset={`${2 * Math.PI * 40 * (1 - (avgMatchScore / 100 || 0))}`} strokeLinecap="round" />
+                    </svg>
+                    <span className="absolute text-2xl font-bold text-gray-900">{avgMatchScore}%</span>
                   </div>
+                  <p className="text-sm text-gray-600">Average Match Score</p>
+                </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="text-center p-3 bg-blue-50 rounded-xl">
-                      <p className="text-2xl font-bold text-blue-600">{nearbyMatchesCount}</p>
-                      <p className="text-xs text-gray-600">Nearby Matches</p>
-                    </div>
-                    <div className="text-center p-3 bg-emerald-50 rounded-xl">
-                      <p className="text-2xl font-bold text-emerald-600">{lifestyleMatchScore}%</p>
-                      <p className="text-xs text-gray-600">Lifestyle Match</p>
-                    </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="text-center p-3 bg-blue-50 rounded-xl">
+                    <p className="text-2xl font-bold text-blue-600">{nearbyMatchesCount}</p>
+                    <p className="text-xs text-gray-600">Nearby Matches</p>
+                  </div>
+                  <div className="text-center p-3 bg-emerald-50 rounded-xl">
+                    <p className="text-2xl font-bold text-emerald-600">{lifestyleMatchScore}%</p>
+                    <p className="text-xs text-gray-600">Lifestyle Match</p>
                   </div>
                 </div>
-              </div>}
-            </div>
+              </div>
+            </div>}
           </div>
         </div>
-      </main>
+      </div>
+    </main>
 
-      <RoomDetailsModal open={roomDetailsOpen} room={roomDetailsRoom} onClose={() => {
+    <RoomDetailsModal open={roomDetailsOpen} room={roomDetailsRoom} onClose={() => {
       setRoomDetailsOpen(false);
       setRoomDetailsRoom(null);
     }} />
 
-      {/* Full-screen lock prompt for explore mode */}
-      {showExploreProfileModal && <div className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center p-6">
-          <div className="w-full max-w-md bg-white rounded-3xl p-8 shadow-xl text-center">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-2">
-              Want better matches?
-            </h2>
-            <p className="text-gray-600 mb-6">Complete your profile.</p>
-            <button type="button" onClick={() => {
+    {/* Full-screen lock prompt for explore mode */}
+    {showExploreProfileModal && <div className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center p-6">
+      <div className="w-full max-w-md bg-white rounded-3xl p-8 shadow-xl text-center">
+        <h2 className="text-2xl font-semibold text-gray-900 mb-2">
+          Want better matches?
+        </h2>
+        <p className="text-gray-600 mb-6">Complete your profile.</p>
+        <button type="button" onClick={() => {
           setShowExploreProfileModal(false);
           onEditProfile?.();
         }} className="w-full py-3.5 px-4 bg-[#081A35] text-white rounded-xl font-semibold hover:bg-[#081A35]/90 transition-all shadow-lg">
-              Complete Profile
-            </button>
-          </div>
-        </div>}
+          Complete Profile
+        </button>
+      </div>
+    </div>}
 
-    </div>;
+  </div>;
 };
