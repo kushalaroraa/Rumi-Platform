@@ -7,18 +7,38 @@ try {
 
 }
 
+function cleanEnvValue(value) {
+  if (value == null) return "";
+  const s = String(value).trim();
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
+    return s.slice(1, -1);
+  }
+  return s;
+}
+
+function buildMongoUri() {
+  const explicitUri = cleanEnvValue(process.env.MONGODB_URI || process.env.MONGO_URI);
+  if (explicitUri) return explicitUri;
+
+  const username = cleanEnvValue(process.env.MONGO_USERNAME);
+  const password = cleanEnvValue(process.env.MONGO_PASSWORD);
+  const dbName = cleanEnvValue(process.env.MONGO_DB_NAME);
+
+  if (!username || !password || !dbName) {
+    throw new Error(
+      "Missing MongoDB env vars. Set MONGODB_URI or MONGO_URI, or provide MONGO_USERNAME, MONGO_PASSWORD, and MONGO_DB_NAME."
+    );
+  }
+
+  return `mongodb+srv://${encodeURIComponent(username)}:${encodeURIComponent(password)}@cluster0.mqvzogk.mongodb.net/${encodeURIComponent(dbName)}?appName=Cluster0`;
+}
+
 const connectDB = async () => {
   try {
-    const MONGO_USERNAME = process.env.MONGO_USERNAME;
-    const MONGO_PASSWORD = process.env.MONGO_PASSWORD;
-    const MONGO_DB_NAME = process.env.MONGO_DB_NAME;
-
-    if (!MONGO_USERNAME || !MONGO_PASSWORD || !MONGO_DB_NAME) {
-      throw new Error("Missing MongoDB env vars. Required: MONGO_USERNAME, MONGO_PASSWORD, MONGO_DB_NAME");
-    }
-
-    const MONGO_URI = `mongodb+srv://${encodeURIComponent(MONGO_USERNAME)}:${encodeURIComponent(MONGO_PASSWORD)}@cluster0.mqvzogk.mongodb.net/${encodeURIComponent(MONGO_DB_NAME)}?appName=Cluster0`;
-
+    const MONGO_URI = buildMongoUri();
     await mongoose.connect(MONGO_URI);
     console.log("Connected to MongoDB");
     return true;
@@ -29,4 +49,4 @@ const connectDB = async () => {
   }
 };
 
-module.exports = connectDB; 
+module.exports = connectDB;

@@ -1,7 +1,59 @@
 const User = require("../models/User");
 const bcrypt = require("bcryptjs");
 const { signToken } = require("../middleware/authMiddleware");
+const {
+  createGoogleState,
+  buildGoogleAuthUrl,
+  exchangeGoogleCode,
+  upsertGoogleUser,
+  redirectWithGoogleResult
+} = require("../services/googleAuthService");
 const SALT_ROUNDS = 10; //controls how strong the hash is -standard is 10
+
+function buildGoogleLoginRedirect() {
+  const state = createGoogleState();
+  return buildGoogleAuthUrl(state);
+}
+
+exports.startGoogleLogin = async (req, res) => {
+  try {
+    const url = buildGoogleLoginRedirect();
+    return res.redirect(302, url);
+  } catch (err) {
+    console.error('google login start error:', err);
+    return res.status(500).json({
+      success: false,
+      message: err.message || 'Unable to start Google login.'
+    });
+  }
+};
+
+exports.handleGoogleCallback = async (req, res) => {
+  try {
+    const { code, state } = req.query || {};
+    if (!code) {
+      return redirectWithGoogleResult(res, { error: 'missing_google_code' });
+    }
+
+    try {
+      require("jsonwebtoken").verify(String(state || ''), process.env.JWT_SECRET || 'rumi-jwt-secret-change-in-production');
+    } catch {
+      return redirectWithGoogleResult(res, { error: 'invalid_google_state' });
+    }
+
+    const googleProfile = await exchangeGoogleCode(String(code));
+    const user = await upsertGoogleUser(googleProfile);
+    const token = signToken({
+      userId: user._id,
+      role: user.role
+    });
+
+    return redirectWithGoogleResult(res, { token });
+  } catch (err) {
+    console.error('google login callback error:', err);
+    return redirectWithGoogleResult(res, { error: 'google_login_failed' });
+  }
+};
 
 exports.registerUser = async (req, res) => {
     try {

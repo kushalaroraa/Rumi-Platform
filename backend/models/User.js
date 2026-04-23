@@ -15,6 +15,26 @@ const verificationStatusSchema = new mongoose.Schema({
   aadharVerified: { type: Boolean, default: false }
 }, { _id: false });
 
+const notificationSettingsSchema = new mongoose.Schema({
+  newMatches: { type: Boolean, default: true },
+  messages: { type: Boolean, default: true },
+  matchRequests: { type: Boolean, default: true },
+  emailNotifications: { type: Boolean, default: false },
+  pushNotifications: { type: Boolean, default: true }
+}, { _id: false });
+
+const privacySettingsSchema = new mongoose.Schema({
+  showOnlineStatus: { type: Boolean, default: true },
+  showLocation: { type: Boolean, default: true },
+  showLastSeen: { type: Boolean, default: false },
+  profileVisibility: { type: String, enum: ['public', 'matches'], default: 'public' }
+}, { _id: false });
+
+const securitySettingsSchema = new mongoose.Schema({
+  twoFactorEnabled: { type: Boolean, default: false },
+  billingStatus: { type: String, default: 'Free' }
+}, { _id: false });
+
 const userSchema = new mongoose.Schema({
   // Basic auth fields
   name: { 
@@ -24,6 +44,9 @@ const userSchema = new mongoose.Schema({
   },
   email: { type: String, required: [true, 'Email is required'], lowercase: true, unique: true, trim: true },
   passwordHash: { type: String, required: [true, 'Password is required'], minlength: 6 },
+  authProvider: { type: String, enum: ['local', 'google'], default: 'local' },
+  googleId: { type: String, default: '' },
+  googlePicture: { type: String, default: null },
   phone: { type: String, trim: true, default: '' },
   role: { type: String, enum: ['user', 'admin'], default: 'user' },
 
@@ -52,6 +75,9 @@ const userSchema = new mongoose.Schema({
     pincode: { type: String, default: '' }
   },
   profilePicture: { type: String, default: null },
+  notificationSettings: { type: notificationSettingsSchema, default: () => ({}) },
+  privacySettings: { type: privacySettingsSchema, default: () => ({}) },
+  securitySettings: { type: securitySettingsSchema, default: () => ({}) },
   verificationDocuments: [
     {
       type: { type: String, enum: ['aadhar', 'college_id'] },
