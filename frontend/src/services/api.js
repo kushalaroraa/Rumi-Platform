@@ -35,9 +35,10 @@ export async function getReceivedAcceptedRequests() {
 export async function getSentRequests() {
   return api.get('/api/request/sent');
 }
-export async function sendRequest(toUserId) {
+export async function sendRequest(toUserId, roomId = null) {
   return api.post('/api/request/send', {
-    toUserId
+    toUserId,
+    roomId
   });
 }
 export async function passRequest(toUserId) {

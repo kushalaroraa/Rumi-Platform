@@ -21,7 +21,7 @@ export const RecommendedRoomsSection = ({
           <Users size={36} className="mr-3" />
           Loading rooms…
         </div> : rooms.length === 0 ? <div className="text-sm text-gray-500">No recommended rooms found.</div> : <div className="overflow-x-auto pb-2">
-          <div className="flex gap-4">
+          <div className="flex gap-3">
             {rooms.map(room => <RecommendedRoomCard key={room._id} room={room} onViewDetails={r => {
           setSelectedRoom(r);
           setOpen(true);
