@@ -3,25 +3,20 @@ import {
   Bell,
   BookOpen,
   ChevronRight,
-  CreditCard,
   Eye,
   EyeOff,
-  Globe,
   HelpCircle,
   Mail,
   Lock,
   MessageCircle,
   RefreshCcw,
   Shield,
-  Smartphone,
   Sparkles,
-  Trash2,
   User,
   CheckCircle2,
   AlertTriangle,
   LogOut,
 } from 'lucide-react';
-import { changePassword } from '../services/api';
 import { useSettingsManager } from '../hooks/useSettingsManager';
 import { toast } from 'sonner';
 
@@ -81,19 +76,18 @@ export default function Settings({ onNavigate, onLogout }) {
     settings,
     loading,
     saving,
-    deleting,
     message,
     error,
     updateSectionValue,
     saveSettings,
     resetSettings,
-    handleDeleteAccount,
     setMessage,
     setError
   } = useSettingsManager(onLogout);
 
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
+  const [deleteSaving, setDeleteSaving] = useState(false);
   const [resource, setResource] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [passwordVisible, setPasswordVisible] = useState({
@@ -107,16 +101,50 @@ export default function Settings({ onNavigate, onLogout }) {
     confirmPassword: ''
   });
   const isGoogleAccount = Boolean(user?.authProvider === 'google' && user?.googleId);
+  const rawApiUrl = String(import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
+  const apiBaseUrl =
+    rawApiUrl ||
+    (typeof window !== 'undefined' && !['localhost', '127.0.0.1'].includes(window.location.hostname)
+      ? window.location.origin
+      : 'http://localhost:9090');
+
+  const notificationEnabled = useMemo(
+    () => Object.values(settings.notificationSettings || {}).some(Boolean),
+    [settings.notificationSettings]
+  );
 
   const stats = useMemo(() => {
-    const notificationsOn = Object.values(settings.notificationSettings || {}).filter(Boolean).length;
-    const privacyOn = Object.values(settings.privacySettings || {}).filter(Boolean).length;
     return [
-      { label: 'Notifications on', value: notificationsOn },
-      { label: 'Privacy toggles on', value: privacyOn },
+      { label: 'Notifications', value: notificationEnabled ? 'On' : 'Off' },
       { label: 'Account status', value: settings.securitySettings?.billingStatus || 'Free' }
     ];
-  }, [settings]);
+  }, [notificationEnabled, settings.securitySettings?.billingStatus]);
+
+  const toggleNotifications = () => {
+    const next = !notificationEnabled;
+    ['newMatches', 'messages', 'matchRequests', 'emailNotifications', 'pushNotifications'].forEach(key => {
+      updateSectionValue('notificationSettings', key, next);
+    });
+  };
+
+  const requestJson = async (path, method, body) => {
+    const token = localStorage.getItem('rumi_token');
+    const response = await fetch(`${apiBaseUrl}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      credentials: 'include',
+      body: body ? JSON.stringify(body) : undefined
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.message || data?.error || 'Request failed.');
+    }
+    return data;
+  };
 
   const savePassword = async () => {
     if (!passwordForm.newPassword || passwordForm.newPassword.trim().length < 6) {
@@ -135,7 +163,7 @@ export default function Settings({ onNavigate, onLogout }) {
     try {
       setPasswordSaving(true);
       setError('');
-      await changePassword({
+      await requestJson('/api/user/change-password', 'POST', {
         currentPassword: isGoogleAccount ? passwordForm.currentPassword || null : passwordForm.currentPassword,
         newPassword: passwordForm.newPassword
       });
@@ -180,29 +208,36 @@ export default function Settings({ onNavigate, onLogout }) {
 
   const handleDelete = async () => {
     try {
-      await handleDeleteAccount();
+      setDeleteSaving(true);
+      await requestJson('/api/user/delete-account', 'DELETE');
+      localStorage.removeItem('rumi_token');
+      localStorage.removeItem('rumi_user');
       toast.success('Account deleted successfully');
       setConfirmDelete(false);
-      if (!onLogout) {
-        window.location.replace('/');
-      }
+      onLogout?.();
+      window.location.replace('/');
     } catch (err) {
       toast.error(err?.response?.data?.message || err?.message || 'Unable to delete account.');
+    } finally {
+      setDeleteSaving(false);
     }
   };
 
   if (loading) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center rounded-[28px] bg-slate-50">
-        <div className="text-sm text-slate-500">Loading settings...</div>
+      <div className="h-screen overflow-y-auto">
+        <div className="flex min-h-[60vh] items-center justify-center rounded-[28px] bg-slate-50">
+          <div className="text-sm text-slate-500">Loading settings...</div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 rounded-[28px] bg-slate-50 p-4 md:p-6">
+    <div className="h-screen overflow-y-auto">
+      <div className="space-y-6 rounded-[28px] bg-slate-50 p-4 md:p-6">
       <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_1px_0_rgba(15,23,42,0.04),0_10px_30px_rgba(15,23,42,0.05)]">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-2xl">
             <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-blue-600">
               <Sparkles size={14} />
@@ -214,8 +249,8 @@ export default function Settings({ onNavigate, onLogout }) {
             </p>
           </div>
 
-          <div className="flex flex-col gap-3">
-            <div className="grid gap-3 sm:grid-cols-3">
+          <div className="flex flex-col gap-4">
+            <div className="grid gap-3 sm:grid-cols-2">
               {stats.map(stat => (
                 <div key={stat.label} className="rounded-2xl bg-slate-50 px-4 py-3">
                   <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{stat.label}</div>
@@ -252,7 +287,7 @@ export default function Settings({ onNavigate, onLogout }) {
           <User size={18} className="text-blue-600" />
           <h2 className="text-lg font-semibold text-slate-950">Quick Links</h2>
         </div>
-        <div className="mt-5 grid gap-3 md:grid-cols-3">
+        <div className="mt-8 grid gap-4 md:grid-cols-3">
           <button
             type="button"
             onClick={() => onNavigate?.('messages')}
@@ -301,104 +336,32 @@ export default function Settings({ onNavigate, onLogout }) {
         </div>
       </section>
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_1px_0_rgba(15,23,42,0.04),0_10px_30px_rgba(15,23,42,0.05)]">
-          <div className="flex items-center gap-2">
-            <Bell size={18} className="text-blue-600" />
-            <h2 className="text-lg font-semibold text-slate-950">Notifications</h2>
-          </div>
-          <div className="mt-5 space-y-3">
-            {[
-              ['newMatches', 'New Matches', 'Get notified about new matches'],
-              ['messages', 'Messages', 'Get notified about new messages'],
-              ['matchRequests', 'Match Requests', 'Get notified about match requests'],
-              ['emailNotifications', 'Email Notifications', 'Receive notifications via email'],
-              ['pushNotifications', 'Push Notifications', 'Receive push notifications']
-            ].map(([key, label, description]) => (
-              <div key={key} className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-4 transition hover:border-slate-300 hover:bg-white">
-                <div className="flex items-center gap-4">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-semibold text-slate-950">{label}</div>
-                    <div className="text-xs text-slate-500">{description}</div>
-                  </div>
-                  <Toggle
-                    checked={Boolean(settings.notificationSettings[key])}
-                    ariaLabel={label}
-                    onClick={() =>
-                      updateSectionValue('notificationSettings', key, !settings.notificationSettings[key])
-                    }
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_1px_0_rgba(15,23,42,0.04),0_10px_30px_rgba(15,23,42,0.05)]">
-          <div className="flex items-center gap-2">
-            <Shield size={18} className="text-blue-600" />
-            <h2 className="text-lg font-semibold text-slate-950">Privacy & Security</h2>
-          </div>
-
-          <div className="mt-5 space-y-3">
-            {[
-              ['showOnlineStatus', 'Show Online Status', "Let others see when you're active"],
-              ['showLocation', 'Show Location', 'Display your location to matches'],
-              ['showLastSeen', 'Show Last Seen', 'Let others see when you were last active']
-            ].map(([key, label, description]) => (
-              <div key={key} className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-4 transition hover:border-slate-300 hover:bg-white">
-                <div className="flex items-center gap-4">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-semibold text-slate-950">{label}</div>
-                    <div className="text-xs text-slate-500">{description}</div>
-                  </div>
-                  <Toggle
-                    checked={Boolean(settings.privacySettings[key])}
-                    ariaLabel={label}
-                    onClick={() =>
-                      updateSectionValue('privacySettings', key, !settings.privacySettings[key])
-                    }
-                  />
-                </div>
-              </div>
-            ))}
-
-            <div className="rounded-2xl bg-slate-50/70 p-4">
-              <div className="mb-3 text-sm font-semibold text-slate-950">Profile Visibility</div>
-              <div className="grid gap-2">
-                {[
-                  ['public', 'Public', 'Visible to everyone'],
-                  ['matches', 'Matches Only', 'Only visible to your matches']
-                ].map(([value, label, description]) => {
-                  const active = settings.privacySettings.profileVisibility === value;
-                  return (
-                    <button
-                      key={value}
-                      type="button"
-                      onClick={() => updateSectionValue('privacySettings', 'profileVisibility', value)}
-                      className={`flex items-start gap-3 rounded-2xl border px-4 py-3 text-left transition ${
-                        active ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 text-slate-950 hover:bg-slate-50 hover:border-slate-300'
-                      }`}
-                    >
-                      <span className="flex-1">
-                        <span className="block text-sm font-semibold">{label}</span>
-                        <span className={`block text-xs ${active ? 'text-blue-100' : 'text-slate-500'}`}>{description}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+      <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_1px_0_rgba(15,23,42,0.04),0_10px_30px_rgba(15,23,42,0.05)]">
+        <div className="flex items-center gap-2">
+          <Bell size={18} className="text-blue-600" />
+          <h2 className="text-lg font-semibold text-slate-950">Notifications</h2>
+        </div>
+        <div className="mt-8 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-4 transition hover:border-slate-300 hover:bg-white">
+          <div className="flex items-center gap-4">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-slate-950">Notifications</div>
+              <div className="text-xs text-slate-500">Turn notifications on or off.</div>
             </div>
+            <Toggle
+              checked={notificationEnabled}
+              ariaLabel="Notifications"
+              onClick={toggleNotifications}
+            />
           </div>
-        </section>
-      </div>
+        </div>
+      </section>
 
       <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_1px_0_rgba(15,23,42,0.04),0_10px_30px_rgba(15,23,42,0.05)]">
         <div className="flex items-center gap-2">
           <Lock size={18} className="text-blue-600" />
           <h2 className="text-lg font-semibold text-slate-950">Account Management</h2>
         </div>
-        <div className="mt-5 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+        <div className="mt-8 grid gap-4">
           <div className="rounded-3xl border border-slate-200 bg-slate-50/70 p-5 shadow-sm">
             <div className="flex items-center gap-3">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-100 text-blue-600">
@@ -409,7 +372,7 @@ export default function Settings({ onNavigate, onLogout }) {
                 <div className="text-sm text-slate-500">Update your password and review security controls.</div>
               </div>
             </div>
-            <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <button
                 type="button"
                 onClick={() => setPasswordOpen(true)}
@@ -418,40 +381,7 @@ export default function Settings({ onNavigate, onLogout }) {
                 <Lock size={16} />
                 Update Password
               </button>
-              <button
-                type="button"
-                onClick={() =>
-                  updateSectionValue('securitySettings', 'twoFactorEnabled', !settings.securitySettings.twoFactorEnabled)
-                }
-                className={`inline-flex flex-1 items-center justify-center gap-2 rounded-2xl border px-5 py-3 text-sm font-semibold shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${
-                  settings.securitySettings.twoFactorEnabled
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                }`}
-              >
-                <Smartphone size={16} />
-                {settings.securitySettings.twoFactorEnabled ? '2FA Enabled' : 'Enable 2FA'}
-              </button>
             </div>
-          </div>
-
-          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600">
-                <CreditCard size={20} />
-              </div>
-              <div>
-                <div className="text-base font-semibold text-slate-950">Billing</div>
-                <div className="text-sm text-slate-500">Your plan is currently Free.</div>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setResource({ title: 'Billing', body: 'Your plan is currently Free. Billing controls can be expanded later from here.' })}
-              className="mt-5 inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-            >
-              View Billing
-            </button>
           </div>
         </div>
       </section>
@@ -461,7 +391,7 @@ export default function Settings({ onNavigate, onLogout }) {
           <HelpCircle size={18} className="text-blue-600" />
           <h2 className="text-lg font-semibold text-slate-950">Support & Resources</h2>
         </div>
-        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Card icon={HelpCircle} title="Help Center" description="FAQs and support" accent="blue" onClick={() => openResource('help')} />
           <Card icon={Shield} title="Privacy Policy" description="How your data is used" accent="green" onClick={() => openResource('privacy')} />
           <Card icon={BookOpen} title="Terms of Service" description="Platform rules" accent="purple" onClick={() => openResource('terms')} />
@@ -474,29 +404,18 @@ export default function Settings({ onNavigate, onLogout }) {
           <AlertTriangle size={18} />
           <h2 className="text-lg font-semibold">Danger Zone</h2>
         </div>
-        <div className="mt-5 grid gap-3 md:grid-cols-2">
-          <button
-            type="button"
-            onClick={() => setResource({ title: 'Deactivate Account', body: 'Temporary deactivation is not available yet. If you want a break, contact support and we will help you next.' })}
-            className="flex items-center justify-between rounded-2xl border border-red-200 bg-white px-5 py-4 text-left text-red-700 shadow-sm transition hover:bg-red-50 hover:border-red-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
-          >
-            <span>
-              <span className="block text-sm font-semibold">Deactivate Account</span>
-              <span className="block text-xs text-red-500">Temporarily disable your account</span>
-            </span>
-            <ChevronRight size={18} />
-          </button>
+        <div className="mt-8 grid gap-3">
           <button
             type="button"
             onClick={() => setConfirmDelete(true)}
-            disabled={deleting}
-            className="flex items-center justify-between rounded-2xl border border-red-600 bg-red-600 px-5 py-4 text-left text-white shadow-sm transition hover:bg-red-700 hover:border-red-700 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+            disabled={deleteSaving}
+            className="flex items-center justify-between rounded-2xl border border-red-100 bg-red-50/80 px-5 py-5 text-left shadow-sm transition hover:border-red-200 hover:bg-red-100/80 disabled:cursor-not-allowed disabled:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
           >
             <span>
-              <span className="block text-sm font-semibold">Delete Account</span>
-              <span className="block text-xs text-red-100">Permanently delete your account</span>
+              <span className="block text-base font-semibold text-red-700">Delete Account</span>
+              <span className="block text-sm text-red-600">Permanently delete your account</span>
             </span>
-            <Trash2 size={18} />
+            <ChevronRight size={20} className="shrink-0 text-red-600" />
           </button>
         </div>
       </section>
@@ -632,15 +551,16 @@ export default function Settings({ onNavigate, onLogout }) {
               <button
                 type="button"
                 onClick={handleDelete}
-                disabled={deleting}
-                className="rounded-xl border border-red-600 bg-red-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
+                disabled={deleteSaving}
+                className="min-w-[10rem] rounded-xl border border-red-600 bg-red-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
               >
-                {deleting ? 'Deleting...' : 'Delete Account'}
+                {deleteSaving ? 'Deleting...' : 'Delete My Account'}
               </button>
             </div>
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

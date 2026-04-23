@@ -341,7 +341,7 @@ export const OfferRoomDashboard = ({
 
       <div className="p-8">
         {activeNav === 'profile' && <RoomProfile />}
-        {activeNav === 'settings' && <SettingsPage />}
+        {activeNav === 'settings' && <SettingsPage onLogout={onLogout} onNavigate={setActiveNav} />}
 
         {(activeNav === 'dashboard' || activeNav === 'listings' || activeNav === 'requests' || activeNav === 'messages') && <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">

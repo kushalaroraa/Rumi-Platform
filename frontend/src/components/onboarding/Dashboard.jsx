@@ -430,11 +430,13 @@ export const Dashboard = ({
         {showLoginNotice && userEmail && <div className="mb-6 rounded-xl bg-emerald-50 border border-emerald-100 px-4 py-3 text-emerald-800 text-sm">
           Logged in as <span className="font-semibold">{userEmail}</span>
         </div>}
+        {activeNav === 'settings' ? (
+          <SettingsPage onLogout={onLogout} onNavigate={setActiveNav} />
+        ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Main Column - Content switching (2/3 width) */}
           <div className="lg:col-span-2">
             {activeNav === 'profile' && <UserProfile />}
-            {activeNav === 'settings' && <SettingsPage />}
 
             {activeNav === 'dashboard' && <div className="bg-white rounded-3xl p-8 shadow-sm">
               <div className="mb-6">
@@ -711,6 +713,7 @@ export const Dashboard = ({
             </div>}
           </div>
         </div>
+        )}
       </div>
     </main>
 

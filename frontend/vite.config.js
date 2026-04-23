@@ -25,6 +25,14 @@ export default defineConfig({
         changeOrigin: true,
         // keep the /api prefix when proxying so backend routes mounted at /api/* continue to match
       },
+      "/user": {
+        target: "http://localhost:9090",
+        changeOrigin: true,
+      },
+      "/chat": {
+        target: "http://localhost:9090",
+        changeOrigin: true,
+      },
       "/uploads": {
         target: "http://localhost:9090",
         changeOrigin: true,
