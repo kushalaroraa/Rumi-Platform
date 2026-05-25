@@ -25,7 +25,6 @@ export function getSocket() {
     socketToken = token;
     socket = io(API_BASE_URL || window.location.origin, {
       autoConnect: true,
-      transports: ['websocket'],
       auth: { token },
     });
   } else {

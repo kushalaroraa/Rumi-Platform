@@ -9,6 +9,7 @@ const allowedOrigins = [
   clientUrl,
   "https://rumi-platform.vercel.app",
   "http://localhost:5173", // Vite default
+  "http://localhost:5174", // Vite alternate
   "http://localhost:3000"  // CRA default
 ].filter(Boolean);
 
@@ -75,7 +76,7 @@ app.use('/api/matches', matchRoutes);
 
 // Chat routes
 const chatRoutes = require('./routes/chatRoutes');
-app.use('/chat', chatRoutes);
+app.use('/api/chat', chatRoutes);
 
 // Cloudinary upload routes
 const uploadRoutes = require('./routes/uploadRoutes');

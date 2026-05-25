@@ -67,7 +67,7 @@ export async function verifyOtp(data) {
   return api.post('/api/auth/otp/verify', data);
 }
 export async function getChatHistory(otherUserId) {
-  return api.get('/chat/history', {
+  return api.get('/api/chat/history', {
     params: {
       userId: otherUserId
     }
@@ -155,14 +155,14 @@ export async function getRoomReceivedAcceptedRequests(roomId) {
   });
 }
 export async function getChatThreads(roomId) {
-  return api.get('/chat/threads', {
+  return api.get('/api/chat/threads', {
     params: {
       roomId
     }
   });
 }
 export async function getChatHistoryWithRoom(otherUserId, roomId) {
-  return api.get('/chat/history', {
+  return api.get('/api/chat/history', {
     params: {
       userId: otherUserId,
       roomId
