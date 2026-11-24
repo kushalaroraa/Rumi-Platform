@@ -1,111 +1,96 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Camera,
-  CheckCheck,
-  Circle,
-  Heart,
-  Image as ImageIcon,
-  Info,
-  Mic,
-  MessageCircle,
-  Phone,
-  PencilLine,
-  Pin,
-  Send,
-  Video,
-} from 'lucide-react';
-import { getChatHistory, getChatThreads } from '../services/api';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, CheckCheck, MessageCircle, Search, Send } from 'lucide-react';
+import { getChatHistory, getChatThreads, normalizeImageUrl, sendChatMessage } from '../services/api';
 import { getSocket } from '../services/socket';
+import { Avatar } from '../components/common/Avatar';
 
-const getInitials = (name) => {
-  const value = String(name || '').trim();
-  if (!value) return 'U';
-  const parts = value.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-};
+function normalizeUserId(value) {
+  if (!value) return '';
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (typeof value === 'object') return String(value?._id || value?.id || '');
+  return '';
+}
 
-const ChatAvatar = ({
-  name,
-  src,
-  sizeClass,
-  hasStory = false,
-  invisible = false,
-}) => {
-  const [imgError, setImgError] = useState(false);
-  const showImage = Boolean(src) && !imgError;
-
-  const avatarContent = (
-    <div className={`${sizeClass} rounded-full overflow-hidden bg-gray-200 ${invisible ? 'invisible' : ''}`}>
-      {showImage ? (
-        <img
-          src={src}
-          alt={name || 'User'}
-          className="h-10 w-10 object-cover"
-          onError={() => setImgError(true)}
-        />
-      ) : (
-        <div className="h-full w-full flex items-center justify-center text-[9px] font-bold text-gray-600 select-none">
-          {getInitials(name)}
-        </div>
-      )}
-    </div>
-  );
-
-  if (hasStory) {
-    return (
-      <div className={`rounded-full p-[2px] bg-gradient-to-tr from-[#f58529] via-[#dd2a7b] to-[#8134af] ${invisible ? 'invisible' : ''}`}>
-        {avatarContent}
-      </div>
-    );
-  }
-
-  return avatarContent;
-};
-
-const ChatPage = ({
-  initialOtherUserId = null,
-}) => {
-  const normalizeUserId = (value) => {
-    if (!value) return '';
-    if (typeof value === 'string' || typeof value === 'number') return String(value);
-    if (typeof value === 'object') return String(value?._id || value?.id || '');
+function getCurrentUserId() {
+  try {
+    const raw = localStorage.getItem('rumi_user');
+    return raw ? normalizeUserId(JSON.parse(raw)?._id) : '';
+  } catch {
     return '';
-  };
+  }
+}
 
-  const getCurrentUserId = () => {
-    try {
-      const raw = localStorage.getItem('rumi_user');
-      return raw ? normalizeUserId(JSON.parse(raw)?._id) : '';
-    } catch {
-      return '';
-    }
-  };
+function formatTimestamp(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
-  const resolveOtherUserId = (candidate) => {
+function formatConversationTime(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime()) || date.getTime() <= 0) return '';
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMinutes = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMinutes / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffMinutes < 1) return 'now';
+  if (diffMinutes < 60) return `${diffMinutes}m`;
+  if (diffHours < 24) return `${diffHours}h`;
+  if (diffDays < 7) return `${diffDays}d`;
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function formatDayDivider(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  if (date.toDateString() === today.toDateString()) return 'Today';
+  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return date.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+const ChatPage = ({ initialOtherUserId = null }) => {
+  const resolveOtherUserId = useCallback((candidate) => {
     const otherUserId = normalizeUserId(candidate);
     const meId = getCurrentUserId();
     if (!otherUserId || otherUserId === meId) return null;
     return otherUserId;
-  };
+  }, []);
 
   const [threads, setThreads] = useState([]);
   const [threadsLoading, setThreadsLoading] = useState(false);
-  const [activeUserId, setActiveUserId] = useState(resolveOtherUserId(initialOtherUserId));
+  const [threadSearch, setThreadSearch] = useState('');
+  const [activeUserId, setActiveUserId] = useState(() => resolveOtherUserId(initialOtherUserId));
+  const [mobileShowThread, setMobileShowThread] = useState(() => Boolean(resolveOtherUserId(initialOtherUserId)));
   const [messagesByConversation, setMessagesByConversation] = useState({});
   const [loadingByConversation, setLoadingByConversation] = useState({});
   const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
-  const currentUserName = useMemo(() => {
-    try {
-      const raw = localStorage.getItem('rumi_user');
-      if (!raw) return 'Messages';
-      const user = JSON.parse(raw);
-      return user?.name || user?.username || 'Messages';
-    } catch {
-      return 'Messages';
+
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    const resolved = resolveOtherUserId(initialOtherUserId);
+    if (resolved) {
+      setActiveUserId(resolved);
+      setMobileShowThread(true);
     }
-  }, []);
+  }, [initialOtherUserId, resolveOtherUserId]);
+
+  const filteredThreads = useMemo(() => {
+    const q = threadSearch.trim().toLowerCase();
+    if (!q) return threads;
+    return threads.filter((t) => String(t?.name || '').toLowerCase().includes(q));
+  }, [threads, threadSearch]);
 
   const activeThread = useMemo(
     () => threads.find((t) => String(t.otherUserId) === String(activeUserId)) || null,
@@ -119,52 +104,23 @@ const ChatPage = ({
 
   const activeLoading = Boolean(loadingByConversation[activeUserId]);
 
-  const formatTimestamp = (value) => {
-    if (!value) return '';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '';
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
-  const formatConversationTime = (value) => {
-    if (!value) return '';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '';
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMinutes = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMinutes / 60);
-    const diffDays = Math.floor(diffHours / 24);
-
-    if (diffMinutes < 1) return 'now';
-    if (diffMinutes < 60) return `${diffMinutes}m`;
-    if (diffHours < 24) return `${diffHours}h`;
-    if (diffDays < 7) return `${diffDays}d`;
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-  };
-
   const groupedMessages = useMemo(() => {
     const groups = [];
-    let lastMessage = null;
+    let lastDay = '';
 
     activeMessages.forEach((message) => {
-      const currentDate = new Date(message.createdAt || Date.now());
-      const needsDivider = !lastMessage
-        || (currentDate.toDateString() !== new Date(lastMessage.createdAt || Date.now()).toDateString())
-        || ((currentDate.getTime() - new Date(lastMessage.createdAt || Date.now()).getTime()) / 60000 > 45);
-
-      if (needsDivider) {
-        groups.push({ type: 'divider', label: formatConversationTime(message.createdAt) });
+      const dayLabel = formatDayDivider(message.createdAt || Date.now());
+      if (dayLabel && dayLabel !== lastDay) {
+        groups.push({ type: 'divider', label: dayLabel });
+        lastDay = dayLabel;
       }
-
       groups.push({ type: 'message', message });
-      lastMessage = message;
     });
 
     return groups;
   }, [activeMessages]);
 
-  const loadThreads = async () => {
+  const loadThreads = useCallback(async () => {
     setThreadsLoading(true);
     try {
       const res = await getChatThreads();
@@ -173,28 +129,37 @@ const ChatPage = ({
         .map((thread) => {
           const otherUserId = resolveOtherUserId(thread?.otherUserId);
           if (!otherUserId) return null;
-          return { ...thread, otherUserId };
+          return {
+            ...thread,
+            otherUserId,
+            image: thread?.image ? normalizeImageUrl(thread.image) : '',
+          };
         })
         .filter(Boolean)
         .filter((thread) => String(thread.otherUserId) !== meId);
+
       setThreads(list);
-      if (activeUserId && !list.some((thread) => String(thread.otherUserId) === String(activeUserId))) {
-        setActiveUserId(resolveOtherUserId(list[0]?.otherUserId));
-      } else if (!activeUserId) {
-        setActiveUserId(resolveOtherUserId(list[0]?.otherUserId));
-      }
+
+      setActiveUserId((prev) => {
+        if (prev && list.some((t) => String(t.otherUserId) === String(prev))) {
+          return prev;
+        }
+        return resolveOtherUserId(list[0]?.otherUserId);
+      });
     } catch (e) {
       setThreads([]);
-      setError(e?.response?.data?.message || 'Failed to load threads.');
+      setError(e?.response?.data?.message || 'Failed to load conversations.');
     } finally {
       setThreadsLoading(false);
     }
-  };
+  }, [resolveOtherUserId]);
 
-  const loadHistory = async (otherUserId) => {
+  const loadHistory = useCallback(async (otherUserId, { silent = false } = {}) => {
     if (!otherUserId) return;
-    setLoadingByConversation((prev) => ({ ...prev, [otherUserId]: true }));
-    setError('');
+    if (!silent) {
+      setLoadingByConversation((prev) => ({ ...prev, [otherUserId]: true }));
+      setError('');
+    }
     try {
       const res = await getChatHistory(otherUserId);
       setMessagesByConversation((prev) => ({
@@ -202,20 +167,23 @@ const ChatPage = ({
         [otherUserId]: res?.data?.messages || [],
       }));
     } catch (e) {
-      setMessagesByConversation((prev) => ({
-        ...prev,
-        [otherUserId]: [],
-      }));
-      setError(e?.response?.data?.message || 'Cannot load chat history.');
+      if (!silent) {
+        setMessagesByConversation((prev) => ({
+          ...prev,
+          [otherUserId]: [],
+        }));
+        setError(e?.response?.data?.message || 'Cannot load chat history.');
+      }
     } finally {
-      setLoadingByConversation((prev) => ({ ...prev, [otherUserId]: false }));
+      if (!silent) {
+        setLoadingByConversation((prev) => ({ ...prev, [otherUserId]: false }));
+      }
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadThreads();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadThreads]);
 
   useEffect(() => {
     if (!activeUserId) return;
@@ -226,15 +194,31 @@ const ChatPage = ({
       return;
     }
     loadHistory(resolved);
-  }, [activeUserId]);
+  }, [activeUserId, loadHistory, resolveOtherUserId]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [activeUserId, activeMessages.length]);
 
   useEffect(() => {
     const socket = getSocket();
-    if (!socket) return;
+    if (!socket) return undefined;
+
+    const joinActiveRoom = () => {
+      const resolved = resolveOtherUserId(activeUserId);
+      if (resolved) {
+        socket.emit('join_chat', { otherUserId: resolved }, () => {});
+      }
+    };
+
+    if (socket.connected) {
+      joinActiveRoom();
+    }
+    socket.on('connect', joinActiveRoom);
 
     const onNewMessage = (msg) => {
-      const sender = String(msg?.senderId?._id || msg?.senderId || '');
-      const receiver = String(msg?.receiverId?._id || msg?.receiverId || '');
+      const sender = normalizeUserId(msg?.senderId);
+      const receiver = normalizeUserId(msg?.receiverId);
       const meId = getCurrentUserId();
       const otherUserId = sender === meId ? receiver : sender;
       if (!otherUserId || otherUserId === meId) return;
@@ -256,25 +240,42 @@ const ChatPage = ({
           [otherUserId]: [...existing, nextMessage],
         };
       });
+
+      setThreads((prev) => {
+        const idx = prev.findIndex((t) => String(t.otherUserId) === String(otherUserId));
+        if (idx === -1) return prev;
+        const updated = {
+          ...prev[idx],
+          lastMessagePreview: nextMessage.message,
+          updatedAt: nextMessage.createdAt || new Date().toISOString(),
+        };
+        return [updated, ...prev.slice(0, idx), ...prev.slice(idx + 1)];
+      });
     };
 
     socket.on('new_message', onNewMessage);
-    return () => socket.off('new_message', onNewMessage);
-  }, [activeUserId]);
 
+    return () => {
+      socket.off('connect', joinActiveRoom);
+      socket.off('new_message', onNewMessage);
+    };
+  }, [activeUserId, resolveOtherUserId]);
+
+  // Fallback refresh if socket is unavailable/disconnected in production environments
   useEffect(() => {
-    const socket = getSocket();
-    if (!socket || !activeUserId) return;
+    if (!activeUserId) return undefined;
+    const interval = window.setInterval(() => {
+      const socket = getSocket();
+      if (!socket || !socket.connected) {
+        loadHistory(activeUserId, { silent: true });
+      }
+    }, 6000);
+    return () => window.clearInterval(interval);
+  }, [activeUserId, loadHistory]);
 
-    const resolved = resolveOtherUserId(activeUserId);
-    if (!resolved) return;
-
-    socket.emit('join_chat', { otherUserId: resolved }, () => {});
-  }, [activeUserId]);
-
-  const sendMessage = async () => {
+  const handleSendMessage = async () => {
     const text = draft.trim();
-    if (!text || !activeUserId) return;
+    if (!text || !activeUserId || sending) return;
 
     const resolved = resolveOtherUserId(activeUserId);
     if (!resolved) {
@@ -282,266 +283,263 @@ const ChatPage = ({
       return;
     }
 
-    const socket = getSocket();
-    if (!socket) {
-      setError('Socket unavailable. Please login again.');
-      return;
-    }
-
-    setDraft('');
+    setSending(true);
     setError('');
+    setDraft('');
 
-    socket.emit('send_message', { otherUserId: resolved, message: text }, (ack) => {
-      if (!ack?.ok) {
-        setError(ack?.error || 'Failed to send message.');
+    try {
+      const res = await sendChatMessage({
+        otherUserId: resolved,
+        message: text,
+        roomId: activeThread?.roomId || null,
+      });
+
+      const savedMsg = res?.data?.message;
+      if (savedMsg) {
+        setMessagesByConversation((prev) => {
+          const existing = prev[resolved] || [];
+          if (existing.some((item) => String(item._id) === String(savedMsg._id))) return prev;
+          return {
+            ...prev,
+            [resolved]: [...existing, savedMsg],
+          };
+        });
+
+        setThreads((prev) => {
+          const idx = prev.findIndex((t) => String(t.otherUserId) === String(resolved));
+          if (idx === -1) return prev;
+          const updated = {
+            ...prev[idx],
+            lastMessagePreview: savedMsg.message,
+            updatedAt: savedMsg.createdAt || new Date().toISOString(),
+          };
+          return [updated, ...prev.slice(0, idx), ...prev.slice(idx + 1)];
+        });
       }
-    });
+    } catch (err) {
+      setDraft(text);
+      setError(err?.response?.data?.message || err?.message || 'Failed to send message. Please try again.');
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
-    <div className="w-full h-full min-h-full bg-white text-black overflow-hidden">
-      <div className="flex h-full min-h-full">
-        <aside className="w-[350px] shrink-0 border-r border-gray-200 bg-white flex flex-col">
-          <div className="h-16 px-4 flex items-center justify-between border-b border-gray-200">
-            <div className="min-w-0">
-              <div className="text-[11px] uppercase tracking-[0.18em] text-gray-500">Messages</div>
-              <div className="mt-0.5 flex items-center gap-2 min-w-0">
-                <span className="font-semibold text-black truncate">{currentUserName}</span>
-              </div>
-            </div>
-            <button type="button" className="grid h-9 w-9 place-items-center rounded-full bg-white text-black border border-gray-200 hover:bg-gray-50 transition-colors" aria-label="Compose message">
-              <PencilLine size={16} />
-            </button>
+    <div className="rumi-chat-shell">
+      {/* Conversations Card */}
+      <aside className={`rumi-chat-sidebar-card ${mobileShowThread ? 'rumi-chat-hidden-mobile' : ''}`}>
+        <div className="p-4 border-b border-gray-100">
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <h2 className="text-lg font-semibold text-gray-900">Chats</h2>
+            <span className="rumi-chip-blue">{threads.length}</span>
           </div>
-
-          <div className="flex-1 overflow-y-auto p-2">
-            {threadsLoading ? (
-              <div className="px-3 py-4 text-sm text-gray-500">Loading chats...</div>
-            ) : threads.length === 0 ? (
-              <div className="px-3 py-4 text-sm text-gray-500">No chats yet. Accept a request to start chatting.</div>
-            ) : (
-              <div className="space-y-1">
-                {threads.map((thread) => {
-                  const isActive = String(activeUserId) === String(thread.otherUserId);
-                  const preview = thread.lastMessagePreview || 'Start conversation';
-                  const unreadCount = Number(thread.unreadCount || 0);
-                  const isLikedPreview = /liked your message/i.test(preview);
-                  const hasActiveStory = Boolean(thread?.hasActiveStory || thread?.activeStory);
-
-                  return (
-                    <button
-                      key={thread.otherUserId}
-                      type="button"
-                      onClick={() => {
-                        const resolved = resolveOtherUserId(thread.otherUserId);
-                        if (!resolved) return;
-                        setActiveUserId(resolved);
-                      }}
-                      className={`w-full rounded-2xl px-3 py-3 text-left transition-colors ${
-                        isActive ? 'bg-gray-100' : 'hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <ChatAvatar
-                          name={thread.name}
-                          src={thread.image}
-                          sizeClass="h-11 w-11"
-                          hasStory={hasActiveStory}
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <span className="font-semibold text-sm text-black truncate">{thread.name}</span>
-                              {(thread.pinned || thread.isPinned) ? <Pin size={13} className="text-black shrink-0" /> : null}
-                            </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <span className="text-[11px] text-gray-500">{formatConversationTime(thread.updatedAt)}</span>
-                              {unreadCount > 0 ? <Circle size={8} className="fill-[#3797f0] text-[#3797f0]" /> : null}
-                            </div>
-                          </div>
-                          <p className={`mt-1 truncate text-sm ${isLikedPreview ? 'text-gray-500 italic' : 'text-gray-500'}`}>
-                            {preview}
-                          </p>
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+          <div className="relative">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            <input
+              type="text"
+              value={threadSearch}
+              onChange={(e) => setThreadSearch(e.target.value)}
+              placeholder="Search conversations…"
+              className="rumi-search-input"
+            />
           </div>
-        </aside>
+        </div>
 
-        <section className="flex-1 min-w-0 flex flex-col bg-white">
-          <header className="h-16 shrink-0 border-b border-gray-200 px-5 flex items-center justify-between bg-white">
-            <div className="flex items-center gap-3 min-w-0">
-              {activeThread ? (
-                <ChatAvatar
-                  name={activeThread.name}
-                  src={activeThread.image}
-                  sizeClass="h-10 w-10"
-                />
-              ) : (
-                <div className="h-10 w-10 rounded-full bg-gray-100 border border-gray-200" />
-              )}
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 min-w-0">
-                  <h3 className="font-semibold text-sm text-black truncate">
-                    {activeThread ? activeThread.name : 'Select a conversation'}
-                  </h3>
-                  {activeThread ? <span className="h-2 w-2 rounded-full bg-[#3797f0]" /> : null}
-                </div>
-                <p className="text-xs text-gray-500">{activeThread ? 'Active now' : 'Choose a conversation to begin'}</p>
+        <div className="rumi-chat-list">
+          {threadsLoading ? (
+            <div className="p-6 text-center text-sm text-gray-500">Loading conversations…</div>
+          ) : filteredThreads.length === 0 ? (
+            <div className="p-6 text-center">
+              <div className="rumi-empty-state-icon">
+                <MessageCircle size={18} />
               </div>
+              <p className="text-sm font-semibold text-gray-900">
+                {threads.length === 0 ? 'No conversations yet' : 'No matching chats'}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                {threads.length === 0
+                  ? 'Accept a match request to start chatting with your future roommate.'
+                  : 'Try searching for another name.'}
+              </p>
             </div>
+          ) : (
+            <div className="space-y-1">
+              {filteredThreads.map((thread) => {
+                const isActive = String(activeUserId) === String(thread.otherUserId);
+                const timeLabel = formatConversationTime(thread.updatedAt);
 
-            <div className="flex items-center gap-2">
-              <button type="button" className="grid h-9 w-9 place-items-center rounded-full bg-white border border-gray-200 text-black hover:bg-gray-50 transition-colors" aria-label="Video call">
-                <Video size={17} />
-              </button>
-              <button type="button" className="grid h-9 w-9 place-items-center rounded-full bg-white border border-gray-200 text-black hover:bg-gray-50 transition-colors" aria-label="Phone call">
-                <Phone size={17} />
-              </button>
-              <button type="button" className="grid h-9 w-9 place-items-center rounded-full bg-white border border-gray-200 text-black hover:bg-gray-50 transition-colors" aria-label="Conversation info">
-                <Info size={17} />
-              </button>
-            </div>
-          </header>
-
-          <div className="flex-1 min-h-0 overflow-y-auto bg-white px-5 py-5">
-            <div className="flex min-h-full flex-col justify-end gap-4 max-w-4xl mx-auto w-full">
-              {error ? <p className="text-xs text-red-600">{error}</p> : null}
-              {activeLoading ? (
-                <p className="text-sm text-gray-500">Loading messages...</p>
-              ) : !activeUserId ? (
-                <p className="text-sm text-gray-500">Pick a chat from the left.</p>
-              ) : groupedMessages.length === 0 ? (
-                <p className="text-sm text-gray-500">No messages yet. Say hi!</p>
-              ) : (
-                groupedMessages.map((entry, index) => {
-                  if (entry.type === 'divider') {
-                    return (
-                      <div key={`divider-${index}`} className="flex justify-center py-2">
-                        <span className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[11px] text-gray-500">
-                          {entry.label}
+                return (
+                  <button
+                    key={thread.otherUserId}
+                    type="button"
+                    onClick={() => {
+                      const resolved = resolveOtherUserId(thread.otherUserId);
+                      if (!resolved) return;
+                      setActiveUserId(resolved);
+                      setMobileShowThread(true);
+                    }}
+                    className={`rumi-chat-item ${isActive ? 'rumi-chat-item--active' : ''}`}
+                  >
+                    <Avatar
+                      src={thread.image}
+                      alt={thread.name || 'User'}
+                      className="w-12 h-12 rounded-full"
+                      iconSize={20}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-semibold text-gray-900 truncate">
+                          {thread.name || 'Rumi Member'}
                         </span>
+                        {timeLabel && (
+                          <span className="text-xs text-gray-400 flex-shrink-0">{timeLabel}</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-500 truncate mt-1">
+                        {thread.lastMessagePreview || 'Say hello to start the conversation'}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </aside>
+
+      {/* Active Conversation Card */}
+      <section className={`rumi-chat-thread-card ${!mobileShowThread ? 'rumi-chat-hidden-mobile' : ''}`}>
+        {activeThread || activeUserId ? (
+          <>
+            {/* Header (functional controls only — no video/voice call buttons) */}
+            <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between gap-3 bg-white flex-shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <button
+                  type="button"
+                  onClick={() => setMobileShowThread(false)}
+                  aria-label="Back to conversations"
+                  className="rumi-chat-mobile-back w-9 h-9 rounded-full bg-gray-100 items-center justify-center text-gray-700 flex-shrink-0"
+                >
+                  <ArrowLeft size={18} />
+                </button>
+                <Avatar
+                  src={activeThread?.image || ''}
+                  alt={activeThread?.name || 'User'}
+                  className="w-10 h-10 rounded-full"
+                  iconSize={18}
+                />
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-gray-900 truncate">
+                    {activeThread?.name || 'Conversation'}
+                  </h3>
+                  <p className="text-xs text-emerald-600 font-medium">
+                    Connected Match
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Message History */}
+            <div className="rumi-chat-messages">
+              <div className="flex flex-col gap-3">
+                {error && (
+                  <div className="rumi-banner-error">
+                    {error}
+                  </div>
+                )}
+
+                {activeLoading ? (
+                  <div className="py-12 text-center text-sm text-gray-500">
+                    Loading messages…
+                  </div>
+                ) : groupedMessages.length === 0 ? (
+                  <div className="py-12 text-center">
+                    <div className="rumi-empty-state-icon">
+                      <MessageCircle size={18} />
+                    </div>
+                    <p className="text-sm font-semibold text-gray-900">No messages yet</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Send a message below to introduce yourself!
+                    </p>
+                  </div>
+                ) : (
+                  groupedMessages.map((entry, idx) => {
+                    if (entry.type === 'divider') {
+                      return (
+                        <div key={`divider-${entry.label}-${idx}`} className="flex justify-center py-2">
+                          <span className="px-3 py-1 rounded-full bg-white border border-gray-100 text-xs text-gray-500 font-medium shadow-sm">
+                            {entry.label}
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    const msg = entry.message;
+                    const isOwn = Boolean(msg?.isOwn);
+                    const timeStr = formatTimestamp(msg?.createdAt);
+
+                    return (
+                      <div
+                        key={msg._id || idx}
+                        className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'}`}
+                      >
+                        <div className={`rumi-chat-bubble ${isOwn ? 'rumi-chat-bubble--own' : 'rumi-chat-bubble--peer'}`}>
+                          <div>{msg.message}</div>
+                          <div className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${isOwn ? 'text-blue-50' : 'text-gray-400'}`}>
+                            <span>{timeStr}</span>
+                            {isOwn && <CheckCheck size={12} />}
+                          </div>
+                        </div>
                       </div>
                     );
+                  })
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+            </div>
+
+            {/* Composer */}
+            <div className="rumi-chat-composer">
+              <input
+                type="text"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendMessage();
                   }
-
-                  const message = entry.message;
-                  const sender = String(message?.senderId?._id || message?.senderId || '');
-                  const isOwn = Boolean(message?.isOwn);
-                  const isVideo = message?.mediaType === 'video' || message?.videoUrl;
-                  const replyLabel = message?.replyTo?.authorName || message?.replyAuthor || '';
-                  const replyText = message?.replyTo?.message || message?.replyText || '';
-                  const senderName = message?.senderId?.name || activeThread?.name || 'User';
-                  const senderImage = message?.senderId?.photo || message?.senderId?.profilePicture || activeThread?.image || '';
-                  const nextEntry = groupedMessages[index + 1];
-                  const nextMessage = nextEntry?.type === 'message' ? nextEntry.message : null;
-                  const nextSender = String(nextMessage?.senderId?._id || nextMessage?.senderId || '');
-                  const showReceivedAvatar = !isOwn && (!nextMessage || Boolean(nextMessage?.isOwn) || nextSender !== sender);
-
-                  return (
-                    <div key={message._id} className={`flex items-end gap-1.5 ${isOwn ? 'justify-end' : 'justify-start'}`}>
-                      {!isOwn ? (
-                        <ChatAvatar
-                          name={senderName}
-                          src={senderImage}
-                          sizeClass="h-7 w-7"
-                          invisible={!showReceivedAvatar}
-                        />
-                      ) : null}
-
-                      <div className={`max-w-[68%] ${isOwn ? 'items-end' : 'items-start'} flex flex-col`}>
-                        {(replyLabel || replyText) ? (
-                          <div className={`mb-1.5 max-w-full rounded-2xl border border-gray-200 bg-white px-3 py-2 text-[11px] text-gray-500 ${isOwn ? 'self-end' : 'self-start'}`}>
-                            {replyLabel ? <div className="font-medium text-black">{replyLabel} replied to you</div> : null}
-                            {replyText ? <div className="mt-0.5 truncate">{replyText}</div> : null}
-                          </div>
-                        ) : null}
-
-                        {isVideo ? (
-                          <div className={`mb-1.5 overflow-hidden rounded-2xl border border-gray-200 bg-white ${isOwn ? 'self-end' : 'self-start'} w-[280px] max-w-full`}>
-                            <div className="relative aspect-video bg-gray-100">
-                              <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="grid h-12 w-12 place-items-center rounded-full bg-black/60 text-white border border-white/10">
-                                  <Video size={20} />
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        ) : null}
-
-                        <div className={`rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm ${isOwn ? 'bg-[#3797f0] text-black rounded-br-md' : 'bg-white text-black border border-gray-200 rounded-bl-md'} ${message?.message ? '' : 'min-h-10'}`}>
-                          {message?.message ? <div className="whitespace-pre-wrap break-words">{message.message}</div> : null}
-                        </div>
-
-                        <div className={`mt-1 text-[10px] text-gray-500 ${isOwn ? 'self-end' : 'self-start'}`}>
-                          {formatTimestamp(message?.createdAt)}
-                          {isOwn ? <CheckCheck size={11} className="ml-1 inline" /> : null}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
+                }}
+                disabled={!activeUserId || sending}
+                placeholder="Type a message…"
+                aria-label="Type a message"
+                className="rumi-chat-input"
+              />
+              <button
+                type="button"
+                onClick={handleSendMessage}
+                disabled={!activeUserId || !draft.trim() || sending}
+                aria-label="Send message"
+                className="w-10 h-10 rounded-full rumi-btn-primary flex items-center justify-center flex-shrink-0"
+              >
+                <Send size={17} />
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 flex items-center justify-center p-8 text-center">
+            <div>
+              <div className="rumi-empty-state-icon">
+                <MessageCircle size={20} />
+              </div>
+              <h3 className="text-base font-semibold text-gray-900">Your Rumi Messages</h3>
+              <p className="text-sm text-gray-500 mt-1">
+                Select a conversation on the left to start chatting with your matches.
+              </p>
             </div>
           </div>
-
-          <footer className="shrink-0 border-t border-gray-200 bg-white px-4 py-3">
-            <div className="mx-auto flex w-full max-w-5xl items-center gap-3">
-              <div className="flex items-center gap-2 text-black">
-                <button type="button" className="grid h-9 w-9 place-items-center rounded-full hover:bg-gray-100 transition-colors" aria-label="Open camera">
-                  <Camera size={18} />
-                </button>
-                <button type="button" className="grid h-9 w-9 place-items-center rounded-full hover:bg-gray-100 transition-colors" aria-label="Open photo picker">
-                  <ImageIcon size={18} />
-                </button>
-                <button type="button" className="grid h-9 w-9 place-items-center rounded-full hover:bg-gray-100 transition-colors" aria-label="Record audio">
-                  <Mic size={18} />
-                </button>
-                <button type="button" className="grid h-9 w-9 place-items-center rounded-full hover:bg-gray-100 transition-colors" aria-label="Send GIF or sticker">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em]">gif</span>
-                </button>
-              </div>
-
-              <div className="flex-1 rounded-full border border-gray-200 bg-white px-4 py-2.5 flex items-center gap-3">
-                <input
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') sendMessage();
-                  }}
-                  disabled={!activeUserId}
-                  placeholder="Message..."
-                  className="w-full bg-transparent text-sm text-black placeholder:text-gray-500 focus:outline-none disabled:cursor-not-allowed"
-                />
-
-                {draft.trim() ? (
-                  <button
-                    type="button"
-                    onClick={sendMessage}
-                    disabled={!activeUserId}
-                    className="grid h-9 w-9 place-items-center rounded-full bg-[#3797f0] text-white shadow-sm hover:brightness-110 disabled:opacity-50"
-                    aria-label="Send message"
-                  >
-                    <Send size={16} />
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="grid h-9 w-9 place-items-center rounded-full text-black hover:bg-gray-100 transition-colors"
-                    aria-label="Like message"
-                  >
-                    <Heart size={17} />
-                  </button>
-                )}
-              </div>
-            </div>
-          </footer>
-        </section>
-      </div>
+        )}
+      </section>
     </div>
   );
 };

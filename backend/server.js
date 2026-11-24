@@ -53,7 +53,8 @@ const PORT = process.env.PORT || 9090;
 connectDB();
 
 const server = http.createServer(app);
-createChatSocketServer(server);
+const io = createChatSocketServer(server);
+app.set('io', io);
 
 server.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);

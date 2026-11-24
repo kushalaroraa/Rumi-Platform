@@ -16,16 +16,30 @@ function extractToken(socket) {
   return null;
 }
 
-async function createChatSocketServer(httpServer) {
+function createChatSocketServer(httpServer) {
+  const clientUrl = (process.env.CLIENT_URL || '').replace(/\/$/, '');
+  const allowedOrigins = [
+    clientUrl,
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'http://localhost:3000',
+    'https://rumi-platform.vercel.app',
+  ].filter(Boolean);
+
   const io = new Server(httpServer, {
     cors: {
-      origin: [
-        process.env.CLIENT_URL || 'http://localhost:5173',
-        'http://localhost:5173',
-        'http://localhost:5174',
-        'http://localhost:3000',
-        'https://rumi-platform.vercel.app',
-      ],
+      origin: function (origin, callback) {
+        if (!origin) return callback(null, true);
+        const normalized = String(origin).replace(/\/$/, '');
+        if (
+          allowedOrigins.includes(normalized) ||
+          /\.vercel\.app$/i.test(normalized) ||
+          process.env.NODE_ENV === 'development'
+        ) {
+          return callback(null, true);
+        }
+        return callback(null, false);
+      },
       credentials: true,
     },
   });
@@ -101,7 +115,7 @@ async function createChatSocketServer(httpServer) {
           deliveredAt: populated.deliveredAt,
         };
 
-        io.to(access.roomKey).emit('new_message', msg);
+        io.to([access.roomKey, `user:${socket.user.userId}`, `user:${String(otherUserId)}`]).emit('new_message', msg);
 
         if (typeof ack === 'function') ack({ ok: true, message: msg });
       } catch (err) {

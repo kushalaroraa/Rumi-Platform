@@ -9,6 +9,9 @@ router.get('/profile', authenticate, userController.getProfile);
 // Update profile
 router.put('/profile', authenticate, userController.updateProfile);
 
+// Change password
+router.put('/password', authenticate, userController.changePassword);
+
 // Upload profile photo (multipart) - field name: photo
 router.post('/profile/photo', authenticate, userController.uploadMiddleware, userController.uploadProfilePhotoHandler);
 

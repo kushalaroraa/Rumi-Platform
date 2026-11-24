@@ -9,6 +9,13 @@ const lifestylePreferencesSchema = new mongoose.Schema({
   cleanliness: { type: String, enum: ['low', 'medium', 'high', ''], default: 'medium' }
 }, { _id: false });
 
+const roommatePreferencesSchema = new mongoose.Schema({
+  preferredGender: { type: String, enum: ['male', 'female', 'non_binary', 'other', 'any', ''], default: 'any' },
+  ageMin: { type: Number, default: 18, min: 18, max: 120 },
+  ageMax: { type: Number, default: 60, min: 18, max: 120 },
+  petsPreference: { type: String, enum: ['allowed', 'not_allowed', 'any', ''], default: 'any' }
+}, { _id: false });
+
 const verificationStatusSchema = new mongoose.Schema({
   emailVerified: { type: Boolean, default: false },
   phoneVerified: { type: Boolean, default: false },
@@ -43,6 +50,7 @@ const userSchema = new mongoose.Schema({
   photo: { type: String, default: null },
 
   lifestylePreferences: { type: lifestylePreferencesSchema, default: () => ({}) },
+  roommatePreferences: { type: roommatePreferencesSchema, default: () => ({}) },
   verificationStatus: { type: verificationStatusSchema, default: () => ({}) },
 
   // More fields

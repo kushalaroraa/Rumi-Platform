@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, Edit, Home, MessageCircle, Plus, Search, Settings, LogOut, Users, Sparkles } from 'lucide-react';
-import { API_BASE_URL, getChatHistoryWithRoom, getChatThreads, getMyRooms, getProfile, getRoomReceivedRequests, getRoomSuggestions, incrementRoomView, inviteToConnect, updateRoom, updateRoomStatus, createRoom, deleteRoom } from '../../services/api';
+import { API_BASE_URL, getChatHistoryWithRoom, getChatThreads, getMyRooms, getProfile, getRoomReceivedAcceptedRequests, getRoomReceivedRequests, getRoomSuggestions, incrementRoomView, inviteToConnect, normalizeImageUrl as normalizeApiImageUrl, sendChatMessage as sendChatMessageApi, updateRoom, updateRoomStatus, createRoom, deleteRoom } from '../../services/api';
 import { acceptRequest, rejectRequest } from '../../services/api';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { RoomFormModal } from './RoomFormModal';
@@ -19,7 +19,7 @@ export const OfferRoomDashboard = ({
   userEmail,
   onEditProfile
 }) => {
-  const [activeNav, setActiveNav] = useState('dashboard');
+  const [activeNav, setActiveNav] = useState('listings');
   const [avatarSrc, setAvatarSrc] = useState('');
   const [intentLoading, setIntentLoading] = useState(true);
   const [loadingListings, setLoadingListings] = useState(false);
@@ -31,6 +31,10 @@ export const OfferRoomDashboard = ({
   const [chatThreads, setChatThreads] = useState([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
+  const [acceptedMatches, setAcceptedMatches] = useState([]);
+  const [invitingIds, setInvitingIds] = useState({});
+  const [invitedIds, setInvitedIds] = useState({});
+  const [inviteBanner, setInviteBanner] = useState({ type: '', text: '' });
   const [actionSending, setActionSending] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatLoading, setChatLoading] = useState(false);
@@ -141,7 +145,12 @@ export const OfferRoomDashboard = ({
     try {
       // Track views when owner opens a room in the dashboard.
       await incrementRoomView(roomId).catch(() => { });
-      const [reqRes, threadRes, suggRes] = await Promise.all([getRoomReceivedRequests(roomId), getChatThreads(roomId), getRoomSuggestions(roomId, 10)]);
+      const [reqRes, acceptedRes, threadRes, suggRes] = await Promise.all([
+        getRoomReceivedRequests(roomId),
+        getRoomReceivedAcceptedRequests(roomId).catch(() => ({ data: { requests: [] } })),
+        getChatThreads(roomId),
+        getRoomSuggestions(roomId, 10)
+      ]);
       const reqs = reqRes?.data?.requests || [];
       setIncomingRequests(reqs.map(r => ({
         ...r,
@@ -150,6 +159,7 @@ export const OfferRoomDashboard = ({
           image: normalizeImageUrl(r.fromUserId?.photo || r.fromUserId?.profilePicture || '') || r.fromUserId?.photo || r.fromUserId?.profilePicture || ''
         }
       })));
+      setAcceptedMatches(acceptedRes?.data?.requests || []);
       const threads = threadRes?.data?.threads || [];
       setChatThreads(normalizeThreads(threads));
       const suggestionsRes = suggRes?.data?.suggestions || [];
@@ -250,28 +260,30 @@ export const OfferRoomDashboard = ({
     }
   };
 
-  const sendChatMessage = () => {
+  const sendChatMessage = async () => {
     const text = chatDraft.trim();
     if (!text || !activeOtherUserId || !selectedRoomId) return;
-
-    const socket = getSocket();
-    if (!socket) {
-      setChatError('Socket unavailable. Please login again.');
-      return;
-    }
 
     setChatDraft('');
     setChatError('');
 
-    socket.emit('send_message', {
-      otherUserId: activeOtherUserId,
-      roomId: selectedRoomId,
-      message: text,
-    }, (ack) => {
-      if (!ack?.ok) {
-        setChatError(ack?.error || 'Failed to send message.');
+    try {
+      const res = await sendChatMessageApi({
+        otherUserId: activeOtherUserId,
+        roomId: selectedRoomId,
+        message: text,
+      });
+      const savedMsg = res?.data?.message;
+      if (savedMsg) {
+        setChatMessages((prev) => {
+          if (prev.some((x) => String(x._id) === String(savedMsg._id))) return prev;
+          return [...prev, savedMsg];
+        });
       }
-    });
+    } catch (err) {
+      setChatDraft(text);
+      setChatError(err?.response?.data?.message || 'Failed to send message.');
+    }
   };
   const openCreateEditor = () => {
     setRoomModalMode('create');
@@ -286,6 +298,44 @@ export const OfferRoomDashboard = ({
   };
   const reloadEverything = async () => {
     await loadListings();
+    if (selectedRoomId) {
+      await loadRoomPanels(String(selectedRoomId));
+    }
+  };
+  const handleInviteToConnect = async (suggestion) => {
+    const targetId = String(suggestion?.userId || '');
+    if (!selectedRoomId || !targetId || invitingIds[targetId] || invitedIds[targetId]) return;
+
+    setInvitingIds((prev) => ({ ...prev, [targetId]: true }));
+    setInviteBanner({ type: '', text: '' });
+
+    try {
+      const res = await inviteToConnect(targetId, String(selectedRoomId));
+      setInvitedIds((prev) => ({ ...prev, [targetId]: true }));
+      setInviteBanner({
+        type: 'success',
+        text: res?.data?.matched
+          ? `Connected with ${suggestion?.name || 'user'}! You can start chatting.`
+          : `Invitation sent to ${suggestion?.name || 'user'}.`
+      });
+      await loadRoomPanels(String(selectedRoomId));
+    } catch (err) {
+      const msg = err?.response?.data?.message || 'Unable to send invite right now.';
+      const status = err?.response?.status;
+      if (status === 409) {
+        setInvitedIds((prev) => ({ ...prev, [targetId]: true }));
+        setInviteBanner({ type: 'success', text: msg });
+        await loadRoomPanels(String(selectedRoomId));
+      } else {
+        setInviteBanner({ type: 'error', text: msg });
+      }
+    } finally {
+      setInvitingIds((prev) => {
+        const next = { ...prev };
+        delete next[targetId];
+        return next;
+      });
+    }
   };
   const handleAcceptRequest = async request => {
     if (!selectedRoomId) return;
@@ -385,14 +435,13 @@ export const OfferRoomDashboard = ({
     </div>;
   }
   const ownerNavItems = [
-    { id: 'dashboard', label: 'Discover Matches', icon: Home },
     {
       id: 'listings',
       label: 'My Listings',
       customIcon: (isActive) => (
         <span className={`w-5 h-5 rounded flex items-center justify-center font-semibold ${isActive ? 'bg-white text-blue-600' : 'bg-blue-50 text-blue-600'
           }`}>
-          +
+          <Home size={16} />
         </span>
       )
     },
@@ -400,7 +449,7 @@ export const OfferRoomDashboard = ({
     { id: 'messages', label: 'Messages', icon: MessageCircle },
     {
       id: 'profile',
-      label: 'Profile',
+      label: 'Room Profile',
       customIcon: (isActive) => (
         <span className={`w-5 h-5 rounded flex items-center justify-center font-semibold ${isActive ? 'bg-white text-blue-600' : 'bg-gray-100 text-gray-600'
           }`}>
@@ -412,23 +461,21 @@ export const OfferRoomDashboard = ({
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
-  const pageTitle = activeNav === 'dashboard'
-    ? 'Dashboard'
-    : activeNav === 'listings'
-      ? 'My Listings'
-      : activeNav === 'requests'
-        ? 'Requests'
-        : activeNav === 'messages'
-          ? 'Messages'
-          : activeNav === 'notifications'
-            ? 'Notifications'
-            : activeNav === 'profile'
-              ? 'Profile'
-              : 'Settings';
+  const pageTitle = activeNav === 'listings'
+    ? 'My Listings'
+    : activeNav === 'requests'
+      ? 'Requests'
+      : activeNav === 'messages'
+        ? 'Messages'
+        : activeNav === 'notifications'
+          ? 'Notifications'
+          : activeNav === 'profile'
+            ? 'Room Profile'
+            : 'Settings';
 
-    const isMainBoard = activeNav === 'dashboard' || activeNav === 'listings';
+  const isMainBoard = activeNav === 'listings';
 
-  return <div className="min-h-screen bg-gray-100 flex h-screen overflow-hidden">
+  return <div className="rumi-app-shell">
     <Sidebar
       items={ownerNavItems}
       activeNav={activeNav}
@@ -442,9 +489,9 @@ export const OfferRoomDashboard = ({
     />
 
     {/* Main */}
-    <main className="flex-1 overflow-auto">
+    <main className="rumi-main-scroll">
       <header className="bg-white shadow-sm px-8 py-4 sticky top-0 z-10">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-4">
           <h1 className="text-2xl font-semibold text-gray-900">{pageTitle}</h1>
 
           <div className="flex items-center gap-4">
@@ -453,18 +500,18 @@ export const OfferRoomDashboard = ({
               <input type="text" placeholder="Search listings, requests, messages" className="pl-10 pr-4 py-2 bg-gray-100 border-0 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-80" />
             </div>
 
-            <button type="button" onClick={() => setActiveNav('notifications')} className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200 transition-colors relative">
+            <button type="button" onClick={() => setActiveNav('notifications')} className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200 transition-colors relative flex-shrink-0">
               <Bell size={20} />
               <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
             </button>
 
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
-                <button className="w-10 h-10 rounded-full overflow-hidden focus:outline-none">
+                <button type="button" aria-label="Open account menu" className="w-10 h-10 rounded-full overflow-hidden focus:outline-none flex-shrink-0 cursor-pointer">
                   <Avatar src={avatarSrc} alt="Profile" className="w-full h-full" />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-72 bg-white text-gray-900 border border-gray-200 rounded-xl shadow-lg p-1 z-[100]">
+              <DropdownMenuContent side="bottom" align="end" sideOffset={8} collisionPadding={12} className="rumi-account-dropdown">
                 <DropdownMenuLabel className="flex flex-col gap-1">
                   <span className="text-sm font-semibold text-gray-900">Account</span>
                   <span className="text-xs text-gray-500 truncate">{userEmail || 'Signed in'}</span>
@@ -487,35 +534,104 @@ export const OfferRoomDashboard = ({
       </header>
 
       <div className="p-8">
-        {activeNav === 'profile' && <RoomProfile />}
-        {activeNav === 'settings' && <SettingsPage />}
+        {activeNav === 'profile' && (
+          <RoomProfile
+            initialRoomId={selectedRoomId}
+            onRoomsUpdated={loadListings}
+            onCreateListing={openCreateEditor}
+          />
+        )}
+        {activeNav === 'settings' && <SettingsPage userEmail={userEmail} />}
         {activeNav === 'notifications' && <div className="bg-white rounded-3xl p-8 shadow-sm">
-          <h2 className="text-2xl font-semibold text-gray-900 mb-1">Notifications</h2>
-          <p className="text-gray-500 mb-6">Recent activity for your room listings.</p>
-          <div className="space-y-3">
-            {notifications.length === 0 ? <p className="text-sm text-gray-500">No notifications yet.</p> : notifications.map((n) => <div key={n.id} className="p-4 rounded-xl border border-gray-100 bg-gray-50">
-              <p className="text-sm font-semibold text-gray-900">{n.title}</p>
-              <p className="text-xs text-gray-500 mt-1">{n.subtitle}</p>
-            </div>)}
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+            <div>
+              <h2 className="text-2xl font-semibold text-gray-900 mb-1">Notifications</h2>
+              <p className="text-sm text-gray-500">Recent activity for your room listings.</p>
+            </div>
+            <span className="rumi-chip-blue">{notifications.length} updates</span>
           </div>
+          {notifications.length === 0 ? (
+            <div className="rumi-empty-state">
+              <div className="rumi-empty-state-icon"><Bell size={18} /></div>
+              <p className="text-sm font-semibold text-gray-900">No notifications yet</p>
+              <p className="text-xs text-gray-500 mt-1">Incoming requests and chat updates will appear here.</p>
+            </div>
+          ) : (
+            <div className="rumi-notifications-grid">
+              {notifications.map((n) => (
+                <div key={n.id} className="p-4 rounded-2xl border border-gray-100 bg-gray-50 flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
+                    <Bell size={16} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-900">{n.title}</p>
+                    <p className="text-xs text-gray-500 mt-1">{n.subtitle}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>}
 
-        {activeNav === 'requests' && <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white rounded-3xl p-8 shadow-sm">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-1">Requests</h2>
-            <p className="text-gray-500 mb-6">All incoming requests for your current listing.</p>
-            {!selectedRoomId ? <div className="text-sm text-gray-500">Select a listing to see requests.</div> : incomingLoading ? <div className="text-sm text-gray-500">Loading requests...</div> : incomingRequests.length === 0 ? <div className="text-sm text-gray-600 bg-gray-50 border border-gray-100 rounded-2xl p-4">No requests yet. Improve your listing to attract users.</div> : <div className="space-y-4">{incomingRequests.map(request => <IncomingRequestCard key={request._id} request={request} onAccept={() => handleAcceptRequest(request)} onReject={() => handleRejectRequest(String(request._id))} />)}</div>}
+        {activeNav === 'requests' && <div className="space-y-6">
+          <div className="rumi-wide-two-col">
+            <div className="bg-white rounded-3xl p-8 shadow-sm">
+              <h2 className="text-2xl font-semibold text-gray-900 mb-1">Incoming Requests</h2>
+              <p className="text-sm text-gray-500 mb-6">All incoming requests for your selected listing.</p>
+              {!selectedRoomId ? <div className="text-sm text-gray-500">Select a listing to see requests.</div> : incomingLoading ? <div className="text-sm text-gray-500">Loading requests…</div> : incomingRequests.length === 0 ? <div className="rumi-empty-state"><p className="text-sm font-semibold text-gray-900">No requests yet</p><p className="text-xs text-gray-500 mt-1">Improve your listing or invite suggested matches below.</p></div> : <div className="space-y-4">{incomingRequests.map(request => <IncomingRequestCard key={request._id} request={request} onAccept={() => handleAcceptRequest(request)} onReject={() => handleRejectRequest(String(request._id))} />)}</div>}
+            </div>
+
+            <div className="bg-white rounded-3xl p-8 shadow-sm">
+              <h2 className="text-2xl font-semibold text-gray-900 mb-1">Suggested Matches</h2>
+              <p className="text-sm text-gray-500 mb-6">Invite compatible seekers who fit this listing.</p>
+              {inviteBanner.text && (
+                <div className={`mb-4 ${inviteBanner.type === 'error' ? 'rumi-banner-error' : 'rumi-banner-success'}`}>
+                  {inviteBanner.text}
+                </div>
+              )}
+              {!selectedRoomId ? <div className="text-sm text-gray-500">Select a listing to see matches.</div> : suggestionsLoading ? <div className="text-sm text-gray-500">Loading suggestions…</div> : suggestions.length === 0 ? <div className="rumi-empty-state"><p className="text-sm font-semibold text-gray-900">No suggested matches right now</p><p className="text-xs text-gray-500 mt-1">New seekers matching your listing will appear here.</p></div> : <div className="space-y-4">{suggestions.map(s => <SuggestedMatchCard key={s.userId} suggestion={s} inviting={Boolean(invitingIds[String(s.userId)])} invited={Boolean(invitedIds[String(s.userId)])} onInvite={() => handleInviteToConnect(s)} />)}</div>}
+            </div>
           </div>
 
           <div className="bg-white rounded-3xl p-8 shadow-sm">
-            <h2 className="text-2xl font-semibold text-gray-900 mb-1">Suggested Matches</h2>
-            <p className="text-gray-500 mb-6">Invite people who fit this listing.</p>
-            {!selectedRoomId ? <div className="text-sm text-gray-500">Select a listing to see matches.</div> : suggestionsLoading ? <div className="text-sm text-gray-500">Loading suggestions...</div> : suggestions.length === 0 ? <div className="text-sm text-gray-600 bg-gray-50 border border-gray-100 rounded-2xl p-4">No suggested matches right now.</div> : <div className="space-y-4">{suggestions.map(s => <SuggestedMatchCard key={s.userId} suggestion={s} onInvite={() => {
-              if (!selectedRoomId) return;
-              inviteToConnect(s.userId, selectedRoomId).then(async () => {
-                await reloadEverything();
-              }).catch(() => { });
-            }} />)}</div>}
+            <h3 className="text-xl font-semibold text-gray-900 mb-1">Active Matches</h3>
+            <p className="text-sm text-gray-500 mb-5">Seekers accepted for this listing.</p>
+            {acceptedMatches.length === 0 ? (
+              <div className="rumi-empty-state">
+                <p className="text-sm font-semibold text-gray-900">No active matches yet</p>
+                <p className="text-xs text-gray-500 mt-1">Accepted requests for this listing will appear here.</p>
+              </div>
+            ) : (
+              <div className="rumi-requests-grid">
+                {acceptedMatches.map((m) => {
+                  const u = m.fromUserId || {};
+                  const uid = String(u._id || '');
+                  const matchedTime = m.respondedAt || m.updatedAt || m.createdAt;
+                  return (
+                    <div key={m._id} className="rumi-request-card">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <Avatar src={normalizeApiImageUrl(u.photo || u.profilePicture || '')} alt={u.name || 'User'} className="w-12 h-12 rounded-full" />
+                          <div className="min-w-0">
+                            <p className="font-semibold text-gray-900 text-sm truncate">{u.name || 'User'}{u.age ? `, ${u.age}` : ''}</p>
+                            <p className="text-xs text-emerald-600 font-medium">{m.matchScore ?? m.match ?? 0}% Match</p>
+                          </div>
+                        </div>
+                        <span className="rumi-status-pill rumi-status-pill--connected">Connected</span>
+                      </div>
+                      {matchedTime && (
+                        <p className="text-xs text-gray-500">Matched {new Date(matchedTime).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                      )}
+                      {uid && (
+                        <button type="button" onClick={() => openChat(uid)} className="w-full px-3 py-2 rumi-btn-primary text-xs">
+                          Open Chat
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>}
 
@@ -546,10 +662,8 @@ export const OfferRoomDashboard = ({
 
               {selectedRoom && <div className="mb-6 border border-gray-100 rounded-3xl overflow-hidden bg-gray-50">
                 <div className="p-5 flex flex-col md:flex-row gap-4 items-start">
-                  <div className="w-full md:w-48 md:flex-shrink-0">
-                    <div className="h-28 md:h-32 bg-slate-100 rounded-2xl overflow-hidden">
-                      <img src={selectedRoom.coverUrl || selectedRoom.photoUrls?.[0] || 'https://images.unsplash.com/photo-1496307653780-42ee777d4833?w=400&h=240&fit=crop'} alt="Listing cover" className="w-full h-full object-cover" />
-                    </div>
+                  <div className="rumi-offer-preview-media">
+                    <img src={selectedRoom.coverUrl || selectedRoom.photoUrls?.[0] || 'https://images.unsplash.com/photo-1496307653780-42ee777d4833?w=400&h=240&fit=crop'} alt="Listing cover" className="w-full h-full object-cover" />
                   </div>
 
                   <div className="flex-1 min-w-0">
@@ -563,15 +677,15 @@ export const OfferRoomDashboard = ({
                           {selectedRoom.location?.area || selectedRoom.location?.city || selectedRoom.location?.address || 'Location'}
                         </p>
                       </div>
-                      <div className="text-right">
-                        <p className="text-sm font-semibold text-gray-900">₹{selectedRoom.monthlyRent ?? 0}</p>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-sm font-semibold text-gray-900">₹{Number(selectedRoom.monthlyRent ?? 0).toLocaleString('en-IN')}</p>
                         <p className="text-xs text-gray-500">/ month</p>
                       </div>
                     </div>
 
                     <div className="mt-4">
                       <p className="text-xs text-gray-500 mb-2">Description</p>
-                      {selectedRoom.roomDescription ? <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                      {selectedRoom.roomDescription ? <p className="text-sm text-gray-700 rumi-whitespace-pre-wrap">
                         {selectedRoom.roomDescription}
                       </p> : <p className="text-sm text-gray-500">No description added yet.</p>}
                     </div>
@@ -679,16 +793,17 @@ export const OfferRoomDashboard = ({
             {/* Suggested Matches */}
             <div className="bg-white rounded-2xl p-6 shadow-sm">
               <h3 className="font-semibold text-gray-900 mb-4">Suggested Matches</h3>
+              {inviteBanner.text && (
+                <div className={`mb-3 ${inviteBanner.type === 'error' ? 'rumi-banner-error' : 'rumi-banner-success'}`}>
+                  {inviteBanner.text}
+                </div>
+              )}
 
-              {!selectedRoomId ? <div className="text-sm text-gray-500">Select a listing to see matches.</div> : suggestionsLoading ? <div className="text-sm text-gray-500">Loading suggestions...</div> : suggestions.length === 0 ? <div className="text-sm text-gray-600 bg-gray-50 border border-gray-100 rounded-2xl p-4">
-                No suggested matches right now.
+              {!selectedRoomId ? <div className="text-sm text-gray-500">Select a listing to see matches.</div> : suggestionsLoading ? <div className="text-sm text-gray-500">Loading suggestions…</div> : suggestions.length === 0 ? <div className="rumi-empty-state">
+                <p className="text-sm font-semibold text-gray-900">No suggested matches right now</p>
+                <p className="text-xs text-gray-500 mt-1">New compatible seekers will appear here.</p>
               </div> : <div className="space-y-4">
-                {suggestions.map(s => <SuggestedMatchCard key={s.userId} suggestion={s} onInvite={() => {
-                  if (!selectedRoomId) return;
-                  inviteToConnect(s.userId, selectedRoomId).then(async () => {
-                    await reloadEverything();
-                  }).catch(() => { });
-                }} />)}
+                {suggestions.map(s => <SuggestedMatchCard key={s.userId} suggestion={s} inviting={Boolean(invitingIds[String(s.userId)])} invited={Boolean(invitedIds[String(s.userId)])} onInvite={() => handleInviteToConnect(s)} />)}
               </div>}
             </div>
           </div>

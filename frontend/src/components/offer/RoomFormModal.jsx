@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
+import { RentSliderInput } from '../common/RentSliderInput';
+import { BUDGET_MAX, BUDGET_MIN } from '../../utils/budget';
 export const RoomFormModal = ({
   mode,
   open,
@@ -9,6 +11,7 @@ export const RoomFormModal = ({
   variant = 'modal'
 }) => {
   const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState('');
 
   // Property details
   const [propertyType, setPropertyType] = useState('apartment');
@@ -16,7 +19,7 @@ export const RoomFormModal = ({
   const [city, setCity] = useState('');
   const [area, setArea] = useState('');
   const [address, setAddress] = useState('');
-  const [monthlyRent, setMonthlyRent] = useState(0);
+  const [monthlyRent, setMonthlyRent] = useState(15000);
   const [securityDeposit, setSecurityDeposit] = useState(0);
 
   // Amenities & room
@@ -66,14 +69,24 @@ export const RoomFormModal = ({
       setAddress(initialRoom.location?.address || '');
       setMonthlyRent(Number(initialRoom.monthlyRent ?? 0));
       setSecurityDeposit(Number(initialRoom.securityDeposit ?? 0));
-      setFurnishingStatus(initialRoom.furnishingStatus || 'furnished');
-      setAttachedBathroom(Boolean(initialRoom.attachedBathroom));
-      setWifi(Boolean(initialRoom.amenities?.wifi));
-      setAc(Boolean(initialRoom.amenities?.ac));
-      setWashingMachine(Boolean(initialRoom.amenities?.washingMachine));
-      setKitchenAccess(Boolean(initialRoom.amenities?.kitchenAccess));
-      setParking(Boolean(initialRoom.amenities?.parking));
-      setPowerBackup(Boolean(initialRoom.amenities?.powerBackup));
+      const amenitiesList = Array.isArray(initialRoom.amenities) ? initialRoom.amenities : [];
+      const furnishingToken = amenitiesList.find(a => String(a).startsWith('furnishing:'));
+      const hasAmenity = key => Array.isArray(initialRoom.amenities)
+        ? amenitiesList.includes(key)
+        : Boolean(initialRoom.amenities?.[key]);
+
+      setFurnishingStatus(
+        furnishingToken
+          ? String(furnishingToken).slice('furnishing:'.length)
+          : (initialRoom.furnishingStatus || 'furnished')
+      );
+      setAttachedBathroom(hasAmenity('attached_bathroom') || Boolean(initialRoom.attachedBathroom));
+      setWifi(hasAmenity('wifi') || Boolean(initialRoom.amenities?.wifi));
+      setAc(hasAmenity('ac') || Boolean(initialRoom.amenities?.ac));
+      setWashingMachine(hasAmenity('washing_machine') || Boolean(initialRoom.amenities?.washingMachine));
+      setKitchenAccess(hasAmenity('kitchen_access') || Boolean(initialRoom.amenities?.kitchenAccess));
+      setParking(hasAmenity('parking') || Boolean(initialRoom.amenities?.parking));
+      setPowerBackup(hasAmenity('power_backup') || Boolean(initialRoom.amenities?.powerBackup));
       setBedAvailability(initialRoom.bedAvailability ?? '');
       setPreferredGender(initialRoom.flatmatePreferences?.preferredGender || '');
       setAgeMin(initialRoom.flatmatePreferences?.ageMin ?? '');
@@ -100,7 +113,7 @@ export const RoomFormModal = ({
       setCity('');
       setArea('');
       setAddress('');
-      setMonthlyRent(0);
+      setMonthlyRent(15000);
       setSecurityDeposit(0);
       setFurnishingStatus('furnished');
       setAttachedBathroom(false);
@@ -128,13 +141,24 @@ export const RoomFormModal = ({
       setPhoneVisibility(false);
       setChatOption(true);
       setPreferredContactTime('');
+    setFormError('');
     }
   }, [open, mode, initialRoom]);
   const handleSave = async () => {
     if (submitting) return;
-    if (!city.trim() || !area.trim()) return;
-    if (!Number.isFinite(monthlyRent) || monthlyRent <= 0) return;
-    if (!roomDescription.trim()) return;
+    setFormError('');
+    if (!city.trim() || !area.trim()) {
+      setFormError('City and area are required.');
+      return;
+    }
+    if (!Number.isFinite(monthlyRent) || monthlyRent < BUDGET_MIN || monthlyRent > BUDGET_MAX) {
+      setFormError('Monthly rent must be between ₹5,000 and ₹1,00,000.');
+      return;
+    }
+    if (!roomDescription.trim()) {
+      setFormError('Room description is required.');
+      return;
+    }
     const form = new FormData();
     form.append('propertyType', propertyType);
     form.append('roomType', roomType);
@@ -193,6 +217,7 @@ export const RoomFormModal = ({
         </div>
 
         <div className="p-6 max-h-[80vh] overflow-auto">
+          {formError && <div className="mb-4 rumi-banner-error">{formError}</div>}
           {existingCover && mode === 'edit' && <div className="mb-6">
               <p className="text-sm font-medium text-gray-700 mb-2">Current cover</p>
               <img src={existingCover} alt="Current cover" className="w-40 h-24 object-cover rounded-xl bg-slate-100" />
@@ -231,12 +256,18 @@ export const RoomFormModal = ({
               <input className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl" value={address} onChange={e => setAddress(e.target.value)} placeholder="Landmark / building name" />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Monthly Rent (₹)</label>
-              <input type="number" min={0} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl" value={monthlyRent} onChange={e => setMonthlyRent(Number(e.target.value))} />
+            <div className="md:col-span-2">
+              <RentSliderInput
+                label="Monthly Rent"
+                value={monthlyRent}
+                onChange={(val) => {
+                  setMonthlyRent(val);
+                  if (formError) setFormError('');
+                }}
+              />
             </div>
 
-            <div>
+            <div className="md:col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-2">Security Deposit (₹)</label>
               <input type="number" min={0} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl" value={securityDeposit} onChange={e => setSecurityDeposit(Number(e.target.value))} />
             </div>

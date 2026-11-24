@@ -3,6 +3,9 @@ import { AuthLayout } from './AuthLayout';
 import { User, MapPin, Camera, ArrowRight, Home, Search, Compass } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getProfile, updateProfile, uploadProfilePhoto, createRoom, normalizeImageUrl } from '../../services/api';
+import { BudgetRangeInput } from '../common/BudgetRangeInput';
+import { RentSliderInput } from '../common/RentSliderInput';
+import { BUDGET_MAX, BUDGET_MIN, getEditableBudgetBounds } from '../../utils/budget';
 export const ProfileSetupFlow = ({
   onComplete,
   mode = 'setup'
@@ -73,14 +76,20 @@ export const ProfileSetupFlow = ({
     }
   }, [isUploadingPhoto]);
 
-  // Step 2 state (preferences used for compatibility scoring)
-  const [budget, setBudget] = useState(1200);
+  // Step 2/3 state (preferences & role-specific budget)
+  const [budgetMin, setBudgetMin] = useState(15000);
+  const [budgetMax, setBudgetMax] = useState(35000);
   const [cleanliness, setCleanliness] = useState('Tidy');
   const [sleepSchedule, setSleepSchedule] = useState('Flexible');
   const [smoking, setSmoking] = useState('Non-Smoker');
   const [guests, setGuests] = useState('Occasionally');
   const [foodPreference, setFoodPreference] = useState('Veg');
   const [profession, setProfession] = useState('Student');
+  const [preferredGender, setPreferredGender] = useState('any');
+  const [prefAgeMin, setPrefAgeMin] = useState('18');
+  const [prefAgeMax, setPrefAgeMax] = useState('45');
+  const [petsPreference, setPetsPreference] = useState('any');
+  const [hasPets, setHasPets] = useState(false);
   const [intent, setIntent] = useState(null);
   const [bioText, setBioText] = useState('');
   const ROOMMATE_NOTE = "I'm looking for a roommate.";
@@ -91,7 +100,7 @@ export const ProfileSetupFlow = ({
   const [offerArea, setOfferArea] = useState('');
   const [offerAddress, setOfferAddress] = useState('');
   const [offerCityOverride, setOfferCityOverride] = useState('');
-  const [offerMonthlyRent, setOfferMonthlyRent] = useState(0);
+  const [offerMonthlyRent, setOfferMonthlyRent] = useState(15000);
   const [offerSecurityDeposit, setOfferSecurityDeposit] = useState(0);
   const [offerAvailableFrom, setOfferAvailableFrom] = useState('');
   const [offerLeaseDurationMonths, setOfferLeaseDurationMonths] = useState('');
@@ -122,7 +131,8 @@ export const ProfileSetupFlow = ({
   const [offerChatOption, setOfferChatOption] = useState(true);
   const [offerPreferredContactTime, setOfferPreferredContactTime] = useState('');
   const offerCity = offerCityOverride.trim() || location.trim();
-  const isOfferStep4Valid = Boolean(offerPropertyType) && Boolean(offerRoomType) && Boolean(offerCity) && offerMonthlyRent > 0;
+  const isOfferRentValid = Number.isFinite(offerMonthlyRent) && offerMonthlyRent >= BUDGET_MIN && offerMonthlyRent <= BUDGET_MAX;
+  const isOfferStep4Valid = Boolean(offerPropertyType) && Boolean(offerRoomType) && Boolean(offerCity) && isOfferRentValid;
   const isOfferStep5Valid = Boolean(offerFurnishingStatus);
   const isOfferStep7Valid = offerPhotos.length > 0;
   const isOfferStep8Valid = offerRoomDescription.trim().length > 0;
@@ -152,16 +162,13 @@ export const ProfileSetupFlow = ({
   const mapFood = f => f === 'Veg' ? 'veg' : f === 'Non-Veg' ? 'non-veg' : f === 'Egg' ? 'egg' : '';
   const mapProfession = p => p === 'Student' ? 'student' : p === 'Working' ? 'working' : p === 'WFH' ? 'WFH' : p === 'Hybrid' ? 'hybrid' : '';
   const mapGuestPolicy = g => g === 'Rarely' ? 'not_allowed' : g === 'Occasionally' ? 'limited' : g === 'Weekends' ? 'limited' : g === 'Often' ? 'allowed' : '';
-  const mapBudgetRange = b => {
-    // Design budget slider is "₹{budget}/mo". Backend expects raw numbers, and main app stores in rupees.
-    // We keep consistency by converting slider value to a rupees-range around it.
-    const base = Math.round(b * 10); // e.g. 1200 -> 12000
-    const min = Math.round(base * 0.9 / 100) * 100;
-    const max = Math.round(base * 1.1 / 100) * 100;
-    return {
-      min,
-      max
-    };
+  const validateBudgetBounds = () => {
+    const minB = Number(budgetMin);
+    const maxB = Number(budgetMax);
+    if (!Number.isFinite(minB) || !Number.isFinite(maxB) || minB < BUDGET_MIN || maxB > BUDGET_MAX || minB > maxB) {
+      return { valid: false, minB, maxB };
+    }
+    return { valid: true, minB, maxB };
   };
   const submitProfile = async (callOnComplete = true) => {
     if (prefillLoading) return;
@@ -171,12 +178,20 @@ export const ProfileSetupFlow = ({
       setFormError('Please enter a valid name, age and profile photo.');
       return;
     }
+    const minAgeNum = prefAgeMin === '' ? 18 : Number(prefAgeMin);
+    const maxAgeNum = prefAgeMax === '' ? 60 : Number(prefAgeMax);
+    if (!Number.isFinite(minAgeNum) || !Number.isFinite(maxAgeNum) || minAgeNum < 18 || maxAgeNum > 120 || minAgeNum > maxAgeNum) {
+      setFormError('Preferred age range must be between 18 and 120, with min age <= max age.');
+      return;
+    }
+    const isOfferer = intent === 'offer';
+    const { valid: budgetValid, minB, maxB } = validateBudgetBounds();
+    if (!isOfferer && !budgetValid) {
+      setFormError('Monthly budget must be between ₹5,000 and ₹1,00,000, with minimum <= maximum.');
+      return;
+    }
     const ageNumLocal = Number(age);
-    const {
-      min: budgetMin,
-      max: budgetMax
-    } = mapBudgetRange(budget);
-    
+
     setSubmitting(true);
     try {
       // Logic simplified: photo is already uploaded on selection!
@@ -192,23 +207,29 @@ export const ProfileSetupFlow = ({
         city: location.trim(),
         profession: mapProfession(profession),
         intent: intent ? String(intent) : '',
-        budgetRange: {
-          min: budgetMin,
-          max: budgetMax
-        },
         bio: composeBio(),
         lifestylePreferences: {
           foodPreference: mapFood(foodPreference),
           sleepSchedule: mapSleep(sleepSchedule),
-          cleanlinessLevel: mapCleanliness(cleanliness),
+          cleanliness: mapCleanliness(cleanliness),
           smoking: mapSmoking(smoking),
-          drinking: '',
-          pets: '',
-          guestPolicy: mapGuestPolicy(guests)
+          petsAllowed: Boolean(hasPets)
+        },
+        roommatePreferences: {
+          preferredGender: preferredGender || 'any',
+          ageMin: minAgeNum,
+          ageMax: maxAgeNum,
+          petsPreference: petsPreference || 'any'
         },
         profilePicture: cloudinaryUrl || photoPreview, // Sync single field
         profileCompleted: mode === 'edit' ? true : intent === 'explore' ? false : true
       };
+      if (!isOfferer) {
+        profileData.budgetRange = {
+          min: minB,
+          max: maxB
+        };
+      }
 
       await updateProfile(profileData);
 
@@ -297,6 +318,9 @@ export const ProfileSetupFlow = ({
       setSubmitting(false);
     }
   };
+  const isGoalStep = (mode === 'setup' && step === 2) || (mode === 'edit' && step === 3);
+  const isLifestyleStep = (mode === 'setup' && step === 3) || (mode === 'edit' && step === 2);
+
   const nextStep = async () => {
     if (submitting) return;
     if (prefillLoading) return;
@@ -319,15 +343,32 @@ export const ProfileSetupFlow = ({
         return;
       }
     }
-    setFormError('');
-
-    // Branching after the intent/description step.
-    if (step === 3) {
+    if (isLifestyleStep) {
+      const minAgeNum = prefAgeMin === '' ? 18 : Number(prefAgeMin);
+      const maxAgeNum = prefAgeMax === '' ? 60 : Number(prefAgeMax);
+      if (!Number.isFinite(minAgeNum) || !Number.isFinite(maxAgeNum) || minAgeNum < 18 || maxAgeNum > 120 || minAgeNum > maxAgeNum) {
+        setFormError('Preferred age range must be between 18 and 120, with min age <= max age.');
+        return;
+      }
+      if (intent !== 'offer') {
+        const { valid: budgetValid } = validateBudgetBounds();
+        if (!budgetValid) {
+          setFormError('Monthly budget must be between ₹5,000 and ₹1,00,000, with minimum <= maximum.');
+          return;
+        }
+      }
+    }
+    if (isGoalStep) {
       if (mode === 'setup' && !intent) {
         setFormError('Please choose what you are looking for.');
         return;
       }
-      if (mode === 'setup' && intent === 'offer') {
+    }
+    setFormError('');
+
+    // Setup step 3 saves profile (and launches Offer flow Step 4 if intent === 'offer').
+    if (mode === 'setup' && step === 3) {
+      if (intent === 'offer') {
         await submitProfile(false);
         setStep(4);
         return;
@@ -336,11 +377,21 @@ export const ProfileSetupFlow = ({
       return;
     }
 
+    // Edit mode step 3 finishes saving updated preferences + bio.
+    if (mode === 'edit' && step === 3) {
+      await submitProfile(true);
+      return;
+    }
+
     // Offer flow steps (4-8).
     if (mode === 'setup' && intent === 'offer') {
       if (step === 4) {
-        if (!isOfferStep4Valid) {
-          setFormError('Please fill in property type, room type, city, and monthly rent.');
+        if (!offerPropertyType || !offerRoomType || !offerCity) {
+          setFormError('Please fill in property type, room type, and city.');
+          return;
+        }
+        if (!isOfferRentValid) {
+          setFormError('Monthly rent must be between ₹5,000 and ₹1,00,000.');
           return;
         }
       }
@@ -381,16 +432,23 @@ export const ProfileSetupFlow = ({
         if (existingPhoto) {
           setPhotoPreview(normalizeImageUrl(existingPhoto));
         }
-        if (u?.budgetRange?.min != null && u?.budgetRange?.max != null) {
-          const base = (Number(u.budgetRange.min) + Number(u.budgetRange.max)) / 2;
-          const slider = Math.round(base / 10);
-          setBudget(Math.min(5000, Math.max(500, slider)));
+        const editableBudget = getEditableBudgetBounds(u?.budgetRange ?? u?.budget, 15000, 35000);
+        if (editableBudget.hasStoredValue) {
+          setBudgetMin(editableBudget.min);
+          setBudgetMax(editableBudget.max);
         }
         const prefs = u?.lifestylePreferences || {};
-        if (prefs?.cleanlinessLevel === 'high') setCleanliness('Sparkling');else if (prefs?.cleanlinessLevel === 'medium') setCleanliness('Tidy');else if (prefs?.cleanlinessLevel === 'low') setCleanliness('Relaxed');
+        const cleanVal = prefs?.cleanliness || prefs?.cleanlinessLevel;
+        if (cleanVal === 'high') setCleanliness('Sparkling');else if (cleanVal === 'medium') setCleanliness('Tidy');else if (cleanVal === 'low') setCleanliness('Relaxed');
         if (prefs?.sleepSchedule === 'early_sleeper') setSleepSchedule('Early Bird');else if (prefs?.sleepSchedule === 'night_owl') setSleepSchedule('Night Owl');else setSleepSchedule('Flexible');
         if (prefs?.foodPreference === 'veg') setFoodPreference('Veg');else if (prefs?.foodPreference === 'non-veg') setFoodPreference('Non-Veg');else if (prefs?.foodPreference === 'egg') setFoodPreference('Egg');
         if (prefs?.smoking === 'yes') setSmoking('Social Smoker');else setSmoking('Non-Smoker');
+        setHasPets(Boolean(prefs?.petsAllowed));
+        const rp = u?.roommatePreferences || {};
+        setPreferredGender(rp.preferredGender || 'any');
+        setPrefAgeMin(rp.ageMin != null ? String(rp.ageMin) : '18');
+        setPrefAgeMax(rp.ageMax != null ? String(rp.ageMax) : '45');
+        setPetsPreference(rp.petsPreference || 'any');
         if (u?.profession === 'student') setProfession('Student');else if (u?.profession === 'working') setProfession('Working');else if (u?.profession === 'WFH') setProfession('WFH');else if (u?.profession === 'hybrid') setProfession('Hybrid');
         if (prefs?.guestPolicy === 'allowed') setGuests('Often');else if (prefs?.guestPolicy === 'not_allowed') setGuests('Rarely');else setGuests('Occasionally');
         const incomingBio = u?.bio || '';
@@ -498,19 +556,23 @@ export const ProfileSetupFlow = ({
         </div>
       </div>;
     return <div className="space-y-1">
-        <div className="mb-6">
-          <label className="flex text-sm font-medium text-slate-700 mb-2 justify-between">
-            <span>Budget Range</span>
-            <span className="text-[#081A35] font-bold">₹{budget}/mo</span>
-          </label>
-          <div className="relative pt-2">
-            <input type="range" min="500" max="5000" step="100" value={budget} onChange={e => setBudget(Number(e.target.value))} className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#081A35]" />
-            <div className="flex justify-between text-xs text-slate-400 mt-1">
-              <span>₹500</span>
-              <span>₹5k+</span>
-            </div>
+        {formError && <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-2 mb-4">
+            {formError}
+          </div>}
+        {intent !== 'offer' && (
+          <div className="mb-6">
+            <BudgetRangeInput
+              label="Monthly Budget"
+              minValue={budgetMin}
+              maxValue={budgetMax}
+              onChange={({ min, max }) => {
+                setBudgetMin(min);
+                setBudgetMax(max);
+                if (formError) setFormError('');
+              }}
+            />
           </div>
-        </div>
+        )}
 
         <PillGroup label="Cleanliness" options={["Sparkling", "Tidy", "Moderate", "Relaxed"]} selected={cleanliness} onSelect={setCleanliness} />
         <PillGroup label="Sleep Schedule" options={["Early Bird", "Night Owl", "Flexible"]} selected={sleepSchedule} onSelect={setSleepSchedule} />
@@ -518,6 +580,47 @@ export const ProfileSetupFlow = ({
         <PillGroup label="Smoking / Drinking" options={["Non-Smoker", "Social Smoker", "Social Drinker", "Never"]} selected={smoking} onSelect={setSmoking} />
         <PillGroup label="Working Status" options={["Student", "Working", "WFH", "Hybrid"]} selected={profession} onSelect={setProfession} />
         <PillGroup label="Guests Frequency" options={["Rarely", "Occasionally", "Weekends", "Often"]} selected={guests} onSelect={setGuests} />
+
+        <div className="pt-4 mt-4 border-t border-slate-100 space-y-4">
+          <p className="text-sm font-semibold text-slate-900">Roommate Preferences</p>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1.5">Preferred Gender</label>
+              <select value={preferredGender} onChange={e => setPreferredGender(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm text-slate-700 outline-none">
+                <option value="any">Any</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+                <option value="non_binary">Non-binary</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1.5">Pets Preference</label>
+              <select value={petsPreference} onChange={e => setPetsPreference(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm text-slate-700 outline-none">
+                <option value="any">Any</option>
+                <option value="allowed">Pets Allowed</option>
+                <option value="not_allowed">No Pets</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1.5">Minimum Age</label>
+              <input type="number" min={18} max={120} value={prefAgeMin} onChange={e => setPrefAgeMin(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm text-slate-700 outline-none" />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1.5">Maximum Age</label>
+              <input type="number" min={18} max={120} value={prefAgeMax} onChange={e => setPrefAgeMax(e.target.value)} className="w-full px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm text-slate-700 outline-none" />
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={hasPets} onChange={e => setHasPets(e.target.checked)} className="w-4 h-4 accent-[#081A35]" />
+            I have a pet / bringing pets
+          </label>
+        </div>
       </div>;
   };
   const renderStep3Intent = () => {
@@ -537,6 +640,9 @@ export const ProfileSetupFlow = ({
         </div>
       </button>;
     return <div>
+        {formError && <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-2 mb-4">
+            {formError}
+          </div>}
         {!isEditMode && <>
             <label className="block text-lg font-semibold text-slate-900 mb-4">What are you looking for?</label>
             <Option id="find" icon={Search} title="Find a Room" desc="I'm looking for a place to rent with flatmates." />
@@ -607,11 +713,15 @@ export const ProfileSetupFlow = ({
         <textarea value={offerAddress} onChange={e => setOfferAddress(e.target.value)} rows={2} placeholder="House number, street, landmarks (optional)" className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl focus:bg-white focus:border-[#4E668A] focus:ring-4 focus:ring-[#4E668A]/10 transition-all outline-none resize-none" />
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1.5">Monthly Rent (₹)</label>
-          <input type="number" min={0} value={offerMonthlyRent} onChange={e => setOfferMonthlyRent(Number(e.target.value))} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl focus:bg-white focus:border-[#4E668A] focus:ring-4 focus:ring-[#4E668A]/10 transition-all outline-none" />
-        </div>
+      <div className="space-y-5">
+        <RentSliderInput
+          label="Monthly Rent"
+          value={offerMonthlyRent}
+          onChange={(val) => {
+            setOfferMonthlyRent(val);
+            if (formError) setFormError('');
+          }}
+        />
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1.5">Security Deposit (₹)</label>
           <input type="number" min={0} value={offerSecurityDeposit} onChange={e => setOfferSecurityDeposit(Number(e.target.value))} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl focus:bg-white focus:border-[#4E668A] focus:ring-4 focus:ring-[#4E668A]/10 transition-all outline-none" />
@@ -863,7 +973,39 @@ export const ProfileSetupFlow = ({
         </div>
       </div>
     </div>;
-  return <AuthLayout title={step === 1 ? 'Tell us about yourself' : step === 2 ? 'Lifestyle Preferences' : step === 3 ? 'Your Goal' : step === 4 ? 'Property Details' : step === 5 ? 'Room & Amenities' : step === 6 ? 'Flatmate Preferences' : step === 7 ? 'Photos & Media' : 'Description & Contact'} subtitle={step === 1 ? 'Help us find the best matches for you.' : step === 2 ? "We'll match you with people who live like you." : step === 3 ? 'What brings you to Rumi?' : step === 4 ? 'Add the details of your room.' : step === 5 ? 'Tell us what amenities you have.' : step === 6 ? 'Describe your ideal flatmate.' : step === 7 ? 'Upload photos (and optionally a video).' : 'Add a description and contact preferences.'} showSidebar={true} onBack={step > 1 ? prevStep : undefined}>
+  const pageTitle = step === 1
+    ? 'Tell us about yourself'
+    : isGoalStep
+      ? 'Your Goal'
+      : isLifestyleStep
+        ? 'Lifestyle Preferences'
+        : step === 4
+          ? 'Property Details'
+          : step === 5
+            ? 'Room & Amenities'
+            : step === 6
+              ? 'Flatmate Preferences'
+              : step === 7
+                ? 'Photos & Media'
+                : 'Description & Contact';
+
+  const pageSubtitle = step === 1
+    ? 'Help us find the best matches for you.'
+    : isGoalStep
+      ? 'What brings you to Rumi?'
+      : isLifestyleStep
+        ? "We'll match you with people who live like you."
+        : step === 4
+          ? 'Add the details of your room.'
+          : step === 5
+            ? 'Tell us what amenities you have.'
+            : step === 6
+              ? 'Describe your ideal flatmate.'
+              : step === 7
+                ? 'Upload photos (and optionally a video).'
+                : 'Add a description and contact preferences.';
+
+  return <AuthLayout title={pageTitle} subtitle={pageSubtitle} showSidebar={true} onBack={step > (mode === 'edit' ? 2 : 1) ? prevStep : undefined}>
       {/* Step Indicator */}
       <div className="flex items-center gap-2 mb-8">
         {(mode === 'edit' ? [2, 3] : intent === 'offer' ? [1, 2, 3, 4, 5, 6, 7, 8] : [1, 2, 3]).map(i => <div key={i} className={`h-1.5 flex-1 rounded-full transition-colors ${i <= step ? 'bg-[#081A35]' : 'bg-slate-200'}`}></div>)}
@@ -884,8 +1026,8 @@ export const ProfileSetupFlow = ({
           duration: 0.3
         }}>
             {step === 1 && renderStep1Basic()}
-            {step === 2 && <Step2Lifestyle />}
-            {step === 3 && renderStep3Intent()}
+            {isGoalStep && renderStep3Intent()}
+            {isLifestyleStep && <Step2Lifestyle />}
             {step === 4 && renderOfferPropertyDetails()}
             {step === 5 && renderOfferAmenities()}
             {step === 6 && renderOfferFlatmatePreferences()}
@@ -903,7 +1045,11 @@ export const ProfileSetupFlow = ({
         opacity: submitting || prefillLoading || step === 1 && !isStep1Valid ? 0.6 : 1,
         cursor: submitting || prefillLoading || step === 1 && !isStep1Valid ? 'not-allowed' : 'pointer'
       }}>
-          {step === 3 ? 'Finish Setup' : step === 8 ? 'Publish Room' : 'Next'} <ArrowRight size={18} />
+          {((mode === 'setup' && step === 3 && intent !== 'offer') || (mode === 'edit' && step === 3))
+            ? 'Finish Setup'
+            : step === 8
+              ? 'Publish Room'
+              : 'Next'} <ArrowRight size={18} />
         </button>
       </div>
     </AuthLayout>;

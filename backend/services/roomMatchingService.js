@@ -62,13 +62,22 @@ function calculateRoomCompatibility(room, user) {
     const cityUser = normalizeCity(user?.city || user?.location?.city);
     if (cityRoom && cityUser && cityRoom === cityUser) score += POINTS.city;
 
-    // Budget vs listing rent
+    // Budget vs listing rent (supports exact single budgets & legacy scalar/half-specified bounds)
     const rent = Number(room?.monthlyRent ?? 0);
     const budget = user?.budgetRange || {};
-    const minB = Number(budget?.min ?? 0);
-    const maxB = Number(budget?.max ?? 0);
-    if (rent > 0 && minB > 0 && maxB > 0) {
-        if (rent >= minB && rent <= maxB) score += POINTS.budget;
+    const legacy = user?.budget != null ? Number(user.budget) : 0;
+    const rawMin = Number(budget?.min ?? (legacy > 0 ? legacy : 0));
+    const rawMax = Number(budget?.max ?? (legacy > 0 ? legacy : 0));
+    const minB = Number.isFinite(rawMin) && rawMin > 0 ? rawMin : 0;
+    const maxB = Number.isFinite(rawMax) && rawMax > 0 ? rawMax : 0;
+    if (rent > 0 && (minB > 0 || maxB > 0)) {
+        const effMin = minB > 0 ? minB : maxB;
+        const effMax = maxB > 0 ? Math.max(effMin, maxB) : minB;
+        if (rent >= effMin && rent <= effMax) {
+            score += POINTS.budget;
+        } else if (rent >= effMin * 0.85 && rent <= effMax * 1.15) {
+            score += Math.round(POINTS.budget * 0.5);
+        }
     }
 
     // Age match
@@ -77,6 +86,8 @@ function calculateRoomCompatibility(room, user) {
     const ageMax = prefs?.ageMax != null ? Number(prefs.ageMax) : null;
     if (Number.isFinite(age) && ageMin != null && ageMax != null && ageMin !== 0 && ageMax !== 0) {
         if (age >= ageMin && age <= ageMax) score += POINTS.age;
+    } else if (!ageMin && !ageMax) {
+        score += POINTS.age;
     }
 
     // Preferred gender match
@@ -90,56 +101,57 @@ function calculateRoomCompatibility(room, user) {
     // Occupation match
     const occupation = prefs?.occupation || '';
     if (occupation && occupation !== 'any') {
-        if ((user?.profession || '') === occupation) score += POINTS.occupation;
+        if ((user?.profession || '').toLowerCase() === occupation.toLowerCase()) score += POINTS.occupation;
     } else {
         score += POINTS.occupation;
     }
 
-    // Cleanliness similarity (difference <= 1)
-    // Note: Model uses "cleanliness", while service was using "cleanlinessLevel"
-    const cleanRoom = prefs?.cleanlinessLevel || '';
-    const cleanUser = userPrefs?.cleanliness || ''; 
-    if (cleanlinessDiff(cleanRoom, cleanUser) <= 1) score += POINTS.cleanliness;
+    // Cleanliness similarity (difference <= 1), supporting both cleanliness & legacy cleanlinessLevel
+    const cleanRoom = (prefs?.cleanlinessLevel || '').toString().toLowerCase();
+    const cleanUser = (userPrefs?.cleanliness || userPrefs?.cleanlinessLevel || '').toString().toLowerCase();
+    if (!cleanRoom || cleanRoom === 'any' || !cleanUser || cleanlinessDiff(cleanRoom, cleanUser) <= 1) {
+        score += POINTS.cleanliness;
+    }
 
     // Sleep schedule match
-    const sleepRoom = prefs?.sleepSchedule || '';
-    const sleepUser = userPrefs?.sleepSchedule || '';
+    const sleepRoom = (prefs?.sleepSchedule || '').toString().toLowerCase();
+    const sleepUser = (userPrefs?.sleepSchedule || '').toString().toLowerCase();
     if (sleepRoom && sleepRoom !== 'any') {
-        if (sleepRoom === sleepUser) score += POINTS.sleep;
+        if (!sleepUser || sleepRoom === sleepUser || sleepUser === 'flexible') score += POINTS.sleep;
     } else {
         score += POINTS.sleep;
     }
 
     // Food preference match
-    const foodRoom = prefs?.foodPreference || '';
-    const foodUser = userPrefs?.foodPreference || '';
+    const foodRoom = (prefs?.foodPreference || '').toString().toLowerCase();
+    const foodUser = (userPrefs?.foodPreference || '').toString().toLowerCase();
     if (foodRoom && foodRoom !== 'any') {
-        if (foodRoom === foodUser) score += POINTS.food;
+        if (foodRoom === foodUser || foodUser === 'both') score += POINTS.food;
     } else {
         score += POINTS.food;
     }
 
     // Smoking constraint
-    const smokingAllowed = prefs?.smokingAllowed || '';
-    const smokingUser = (userPrefs?.smoking || '').toString();
+    const smokingAllowed = (prefs?.smokingAllowed || '').toString().toLowerCase();
+    const smokingUser = (userPrefs?.smoking || '').toString().toLowerCase();
     if (smokingAllowed === 'not_allowed') {
-        if (smokingUser === 'no') score += POINTS.smoking;
+        if (!smokingUser || smokingUser === 'no' || smokingUser === 'never') score += POINTS.smoking;
     } else {
         score += POINTS.smoking;
     }
 
     // Drinking constraint
-    const drinkingAllowed = prefs?.drinkingAllowed || '';
-    const drinkingUser = (userPrefs?.drinking || '').toString();
+    const drinkingAllowed = (prefs?.drinkingAllowed || '').toString().toLowerCase();
+    const drinkingUser = (userPrefs?.drinking || '').toString().toLowerCase();
     if (drinkingAllowed === 'not_allowed') {
-        if (drinkingUser === 'no') score += POINTS.drinking;
+        if (!drinkingUser || drinkingUser === 'no' || drinkingUser === 'never') score += POINTS.drinking;
     } else {
         score += POINTS.drinking;
     }
 
-    // Pets constraint (Note: model has petsAllowed boolean, but userPrefs might have something else. Checking User.js line 6: petsAllowed)
-    const petsAllowedPref = prefs?.petsAllowed || '';
-    const userHasPets = !!userPrefs?.petsAllowed;
+    // Pets constraint
+    const petsAllowedPref = (prefs?.petsAllowed || '').toString().toLowerCase();
+    const userHasPets = Boolean(userPrefs?.petsAllowed);
     if (petsAllowedPref === 'not_allowed') {
         if (!userHasPets) score += POINTS.pets;
     } else {

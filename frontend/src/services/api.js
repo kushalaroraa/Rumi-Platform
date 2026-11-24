@@ -26,6 +26,17 @@ export async function getMatches(params) {
     params
   });
 }
+export async function searchProfiles(params, config = {}) {
+  return api.get('/api/matches/search', {
+    params,
+    ...config
+  });
+}
+export async function getCityMatches(params) {
+  return api.get('/api/matches/city', {
+    params
+  });
+}
 export async function getReceivedRequests() {
   return api.get('/api/request/received');
 }
@@ -41,9 +52,10 @@ export async function sendRequest(toUserId, roomId = null) {
     roomId
   });
 }
-export async function passRequest(toUserId) {
+export async function passRequest(toUserId, roomId = null) {
   return api.post('/api/request/pass', {
-    toUserId
+    toUserId,
+    roomId
   });
 }
 export async function acceptRequest(data) {
@@ -73,6 +85,9 @@ export async function getChatHistory(otherUserId) {
     }
   });
 }
+export async function sendChatMessage(data) {
+  return api.post('/api/chat/send', data);
+}
 
 // Assistant (Gemini RAG)
 export async function sendRagMessage(payload) { //The payload contains the user query in the format { message: string }
@@ -87,6 +102,9 @@ export async function sendAssistantMessage(payload) {
 // Profile
 export async function updateProfile(data) {
   return api.put('/user/profile', data);
+}
+export async function changePassword(data) {
+  return api.put('/user/password', data);
 }
 export async function getProfile() {
   return api.get('/user/profile');
@@ -109,11 +127,12 @@ export async function createRoom(form) {
     }
   });
 }
-export async function getRecommendedRooms(limit = 5) {
+export async function getRecommendedRooms(arg = 5) {
+  const params = typeof arg === 'object' && arg !== null
+    ? arg
+    : { limit: arg };
   return api.get('/api/rooms/recommended', {
-    params: {
-      limit
-    }
+    params
   });
 }
 

@@ -15,7 +15,7 @@ export const Sidebar = ({
   const AICardIcon = aiCard.icon || Sparkles;
 
   return (
-    <aside className="w-64 bg-white shadow-sm flex flex-col h-screen overflow-hidden sticky top-0">
+    <aside className="rumi-sidebar w-64 bg-white shadow-sm flex flex-col overflow-hidden">
       {/* Logo Section */}
       <div className="p-6 flex-shrink-0 flex items-center gap-2">
         <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">

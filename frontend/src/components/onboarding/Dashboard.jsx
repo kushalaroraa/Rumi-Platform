@@ -1,17 +1,21 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
-import { Home, Search, Heart, MessageCircle, User, Settings, LogOut, Bell, Users, DollarSign, Sparkles, BarChart3, Target, X, Edit, Send, Clock, Check, XCircle, Inbox } from 'lucide-react';
+import { Home, Heart, MessageCircle, User, Settings, LogOut, Bell, Users, DollarSign, Sparkles, BarChart3, Target, X, Edit, Send, Clock, Check, XCircle, Inbox } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from '../ui/dropdown-menu';
-import { getMatches, getReceivedRequests, getReceivedAcceptedRequests, getSentRequests, sendRequest, passRequest, acceptRequest, rejectRequest, getChatHistory, getProfile, getRecommendedRooms, normalizeImageUrl } from '../../services/api';
+import { getMatches, getCityMatches, getReceivedRequests, getReceivedAcceptedRequests, getSentRequests, sendRequest, passRequest, acceptRequest, rejectRequest, getChatHistory, getProfile, getRecommendedRooms, normalizeImageUrl } from '../../services/api';
 import { API_BASE_URL } from '../../services/api';
 import { RecommendedRoomsSection } from '../explore/RecommendedRoomsSection';
 import { RoomDetailsModal } from '../explore/RoomDetailsModal';
+import { FindNextRumiSection } from '../explore/FindNextRumiSection';
+import { ProfileDetailsModal } from '../explore/ProfileDetailsModal';
+import { ProfileSearchBar } from '../explore/ProfileSearchBar';
 import { OfferRoomDashboard } from '../offer/OfferRoomDashboard';
 import { Sidebar } from '../layout/Sidebar';
 import UserProfile from '../../pages/UserProfile';
 import SettingsPage from '../../pages/Settings';
 import ChatPage from '../../pages/ChatPage';
 import { Avatar } from '../common/Avatar';
+import { formatBudgetLabel } from '../../utils/budget';
 
 export const Dashboard = ({
   onLogout,
@@ -28,6 +32,9 @@ export const Dashboard = ({
   const [requestsReceived, setRequestsReceived] = useState([]);
   const [sentRequests, setSentRequests] = useState([]);
   const [activeMatches, setActiveMatches] = useState([]);
+  const [receivedError, setReceivedError] = useState(false);
+  const [sentError, setSentError] = useState(false);
+  const [matchesError, setMatchesError] = useState(false);
   const [sending, setSending] = useState(false);
   const [chatWithUserId, setChatWithUserId] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
@@ -42,6 +49,17 @@ export const Dashboard = ({
   const explorePromptShownRef = useRef(false);
   const [roomDetailsOpen, setRoomDetailsOpen] = useState(false);
   const [roomDetailsRoom, setRoomDetailsRoom] = useState(null);
+  const [availableRoomCities, setAvailableRoomCities] = useState([]);
+  const [selectedRoomCity, setSelectedRoomCity] = useState('');
+  const [filterRoomsByLocation, setFilterRoomsByLocation] = useState(false);
+  const [cityProfiles, setCityProfiles] = useState([]);
+  const [cityLoading, setCityLoading] = useState(false);
+  const [cityError, setCityError] = useState('');
+  const [userCityLabel, setUserCityLabel] = useState('');
+  const [availableRumiCities, setAvailableRumiCities] = useState([]);
+  const [missingUserCity, setMissingUserCity] = useState(false);
+  const [profileDetailsOpen, setProfileDetailsOpen] = useState(false);
+  const [profileDetailsUser, setProfileDetailsUser] = useState(null);
     const normalizeUserId = (value) => {
       if (!value) return '';
       if (typeof value === 'string' || typeof value === 'number') return String(value);
@@ -114,11 +132,8 @@ export const Dashboard = ({
       return () => window.clearTimeout(t);
     }
   }, [userEmail]);
-  const budgetToDisplay = budgetRange => {
-    const minV = budgetRange?.min ?? 0;
-    const thousand = Math.round(minV / 1000);
-    return thousand;
-  };
+  const budgetToDisplay = (budgetRange, legacyBudget) =>
+    formatBudgetLabel(budgetRange ?? legacyBudget, { emptyText: '' });
   const deriveTags = (u, reasons = []) => {
     const prefs = u?.lifestylePreferences || {};
     const tags = [];
@@ -144,7 +159,14 @@ export const Dashboard = ({
       return;
     }
     setLoading(true);
+    setReceivedError(false);
+    setSentError(false);
+    setMatchesError(false);
     try {
+      let receivedFailed = false;
+      let sentFailed = false;
+      let receivedAcceptedFailed = false;
+
       // Use individual try-catch or settled promises to prevent one failure from breaking everything
       const matchesPromise = getMatches({ limit: 20 }).catch(e => {
         console.error('getMatches error', e);
@@ -152,14 +174,17 @@ export const Dashboard = ({
       });
       const receivedPromise = getReceivedRequests().catch(e => {
         console.error('getReceivedRequests error', e);
+        receivedFailed = true;
         return { data: { requests: [] } };
       });
       const sentPromise = getSentRequests().catch(e => {
         console.error('getSentRequests error', e);
+        sentFailed = true;
         return { data: { requests: [] } };
       });
       const receivedAcceptedPromise = getReceivedAcceptedRequests().catch(e => {
         console.error('getReceivedAcceptedRequests error', e);
+        receivedAcceptedFailed = true;
         return { data: { requests: [] } };
       });
 
@@ -170,6 +195,10 @@ export const Dashboard = ({
         receivedAcceptedPromise
       ]);
 
+      setReceivedError(receivedFailed);
+      setSentError(sentFailed);
+      setMatchesError(sentFailed && receivedAcceptedFailed);
+
       const matches = matchesRes?.data?.matches || [];
       const received = receivedRes?.data?.requests || [];
       const sent = sentRes?.data?.requests || [];
@@ -177,7 +206,7 @@ export const Dashboard = ({
 
       const mappedSwipe = matches.map(m => {
         const u = m.user || m;
-        const budgetDisplay = budgetToDisplay(u?.budgetRange);
+        const budgetLabel = budgetToDisplay(u?.budgetRange, u?.budget);
         const rawImg = u?.photo || u?.profilePicture;
         const baseTags = deriveTags(u, m.reasons || []);
         const hasRoom = u?.intent === 'offer';
@@ -192,7 +221,7 @@ export const Dashboard = ({
           bio: u.bio || '',
           tags,
           hasRoom,
-          budget: budgetDisplay
+          budgetLabel
         };
       });
 
@@ -202,10 +231,12 @@ export const Dashboard = ({
           id: r._id,
           name: u.name,
           age: u.age ?? '',
+          city: u.city || u.location?.city || '',
           image: normalizeImageUrl(u.photo || u.profilePicture),
           match: r.matchScore ?? r.match ?? 0,
           userId: u._id,
-          requestId: r._id
+          requestId: r._id,
+          createdAt: r.createdAt || null
         };
       });
 
@@ -215,24 +246,34 @@ export const Dashboard = ({
           id: r._id,
           name: u.name,
           age: u.age ?? '',
+          city: u.city || u.location?.city || '',
           image: normalizeImageUrl(u.photo || u.profilePicture),
           match: r.matchScore ?? r.match ?? 0,
           status: r.status,
           userId: u._id,
-          requestId: r._id
+          roomId: r.roomId?._id || r.roomId || null,
+          requestId: r._id,
+          createdAt: r.createdAt || null,
+          respondedAt: r.respondedAt || r.updatedAt || null
         };
       });
 
       const activeMap = new Map();
-      mappedSent.filter(r => r.status === 'accepted').forEach(r => activeMap.set(r.userId, r));
+      mappedSent.filter(r => r.status === 'accepted').forEach(r => activeMap.set(r.userId, {
+        ...r,
+        matchedAt: r.respondedAt || r.createdAt || null
+      }));
       receivedAccepted.forEach(r => {
         const u = r.fromUserId || {};
         activeMap.set(u._id, {
           id: r._id,
           name: u.name,
+          age: u.age ?? '',
+          city: u.city || u.location?.city || '',
           match: r.matchScore ?? r.match ?? 0,
           image: normalizeImageUrl(u.photo || u.profilePicture),
-          userId: u._id
+          userId: u._id,
+          matchedAt: r.respondedAt || r.updatedAt || r.createdAt || null
         });
       });
 
@@ -244,6 +285,51 @@ export const Dashboard = ({
       console.error('reloadDashboard critical error', e);
     } finally {
       setLoading(false);
+    }
+  };
+  const loadRecommendedRooms = async (cityOverride = selectedRoomCity, filterOverride = filterRoomsByLocation) => {
+    setRoomsLoading(true);
+    try {
+      const roomsRes = await getRecommendedRooms({
+        limit: 30,
+        city: cityOverride || '',
+        filterByLocation: Boolean(filterOverride)
+      });
+      setRecommendedRooms(roomsRes?.data?.rooms || []);
+      if (Array.isArray(roomsRes?.data?.availableCities)) {
+        setAvailableRoomCities(roomsRes.data.availableCities);
+      }
+    } finally {
+      setRoomsLoading(false);
+    }
+  };
+
+  const loadCityRecommendations = async (cityOverride) => {
+    const token = localStorage.getItem('rumi_token');
+    if (!token) {
+      setCityProfiles([]);
+      setUserCityLabel('');
+      setAvailableRumiCities([]);
+      setMissingUserCity(false);
+      return;
+    }
+    setCityLoading(true);
+    setCityError('');
+    try {
+      const params = { limit: 20 };
+      if (cityOverride) params.city = cityOverride;
+      const res = await getCityMatches(params);
+      setCityProfiles(res?.data?.profiles || []);
+      setUserCityLabel(res?.data?.city || '');
+      if (Array.isArray(res?.data?.availableCities)) {
+        setAvailableRumiCities(res.data.availableCities);
+      }
+      setMissingUserCity(Boolean(res?.data?.missingCity));
+    } catch (e) {
+      setCityProfiles([]);
+      setCityError(e?.response?.data?.message || 'Please try again in a moment.');
+    } finally {
+      setCityLoading(false);
     }
   };
   useEffect(() => {
@@ -263,24 +349,25 @@ export const Dashboard = ({
         }
         const exploreLocked = u?.intent === 'explore' && !u?.profileCompleted;
         setIsExploreLocked(Boolean(exploreLocked));
-        setRoomsLoading(true);
-        try {
-          const roomsRes = await getRecommendedRooms(30);
-          setRecommendedRooms(roomsRes?.data?.rooms || []);
-        } finally {
-          setRoomsLoading(false);
-        }
+        const profileCity = (u?.city || u?.location?.city || '').trim();
+        if (profileCity) setSelectedRoomCity(profileCity);
+        await loadRecommendedRooms(profileCity, false);
         if (exploreLocked) {
           setSwipeCards([]);
           setRequestsReceived([]);
           setSentRequests([]);
           setActiveMatches([]);
+          setCityProfiles([]);
+          setUserCityLabel(profileCity);
+          setMissingUserCity(!profileCity);
         } else {
           reloadDashboard();
+          loadCityRecommendations();
         }
         setIntentResolved(true);
       } catch {
         reloadDashboard();
+        loadCityRecommendations();
         setIntentResolved(true);
       }
     };
@@ -308,6 +395,7 @@ export const Dashboard = ({
         setRevealExploreMatches(true);
         setShowExploreProfileModal(true);
         reloadDashboard();
+        loadCityRecommendations();
       }
     };
     window.addEventListener('scroll', onScroll, {
@@ -404,6 +492,120 @@ export const Dashboard = ({
     setRequestsReceived((prev) => prev.filter((item) => String(item?.requestId || '') !== acceptedRequestId));
     setSwipeCards((prev) => prev.filter((card) => String(card?.userId || '') !== acceptedUserId));
   };
+  const currentUserId = getCurrentUserId();
+
+  const roomStatusMap = useMemo(() => {
+    const map = {};
+    for (const r of recommendedRooms) {
+      if (r?._id && r?.userInteractionStatus) {
+        map[String(r._id)] = r.userInteractionStatus;
+      }
+    }
+    for (const s of sentRequests) {
+      if (!s?.roomId) continue;
+      const rid = String(s.roomId);
+      if (s.status === 'accepted') {
+        map[rid] = 'accepted';
+      } else if (s.status === 'pending' && map[rid] !== 'accepted') {
+        map[rid] = 'pending';
+      }
+    }
+    return map;
+  }, [recommendedRooms, sentRequests]);
+
+  const profileStatusMap = useMemo(() => {
+    const map = {};
+    for (const m of activeMatches) {
+      const uid = normalizeUserId(m?.userId ?? m?.id);
+      if (uid) map[uid] = 'connected';
+    }
+    for (const r of requestsReceived) {
+      const uid = normalizeUserId(r?.userId);
+      if (uid && !map[uid]) map[uid] = 'pending_received';
+    }
+    for (const s of sentRequests) {
+      if (s?.roomId) continue;
+      const uid = normalizeUserId(s?.userId);
+      if (!uid || map[uid] === 'connected') continue;
+      if (s.status === 'accepted') map[uid] = 'connected';
+      else if (s.status === 'pending') map[uid] = 'pending_sent';
+      else if (s.status === 'rejected' && !map[uid]) map[uid] = 'passed';
+    }
+    return map;
+  }, [activeMatches, requestsReceived, sentRequests]);
+
+  const handleLikeRoom = async (room) => {
+    const ownerId = normalizeUserId(room?.ownerUserId);
+    const roomId = room?._id ? String(room._id) : null;
+    if (!ownerId || !roomId) {
+      throw new Error('Room owner details are unavailable.');
+    }
+    const res = await sendRequest(ownerId, roomId);
+    const matched = Boolean(res?.data?.matched);
+    const nextStatus = matched ? 'accepted' : 'pending';
+    setRecommendedRooms((prev) => prev.map((item) => (
+      String(item._id) === roomId
+        ? { ...item, userInteractionStatus: nextStatus }
+        : item
+    )));
+    reloadDashboard();
+    return { matched };
+  };
+
+  const handlePassRoom = async (room) => {
+    const ownerId = normalizeUserId(room?.ownerUserId);
+    const roomId = room?._id ? String(room._id) : null;
+    if (!ownerId || !roomId) {
+      throw new Error('Room owner details are unavailable.');
+    }
+    await passRequest(ownerId, roomId);
+    setRecommendedRooms((prev) => prev.filter((item) => String(item._id) !== roomId));
+  };
+
+  const handleSendProfileRequest = async (profile) => {
+    const targetId = normalizeUserId(profile?._id);
+    if (!targetId) throw new Error('Profile ID missing.');
+    const res = await sendRequest(targetId, null);
+    const matched = Boolean(res?.data?.matched);
+    const nextStatus = matched ? 'connected' : 'pending_sent';
+    setCityProfiles((prev) => prev.map((p) => (
+      String(p._id) === targetId ? { ...p, requestStatus: nextStatus } : p
+    )));
+    setSwipeCards((prev) => prev.filter((c) => String(c.userId) !== targetId));
+    reloadDashboard();
+    return { matched };
+  };
+
+  const handlePassProfile = async (profile) => {
+    const targetId = normalizeUserId(profile?._id);
+    if (!targetId) throw new Error('Profile ID missing.');
+    await passRequest(targetId, null);
+    setCityProfiles((prev) => prev.filter((p) => String(p._id) !== targetId));
+    setSwipeCards((prev) => prev.filter((c) => String(c.userId) !== targetId));
+    reloadDashboard();
+  };
+
+  const openProfileDetails = (profile) => {
+    if (!profile) return;
+    setRoomDetailsOpen(false);
+    setRoomDetailsRoom(null);
+    setProfileDetailsUser(profile);
+    setProfileDetailsOpen(true);
+  };
+
+  const formatTimestampLabel = (value) => {
+    if (!value) return '';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
   const quickActions = [{
     icon: MessageCircle,
     label: 'View Messages',
@@ -451,41 +653,47 @@ export const Dashboard = ({
 
   const showDashboardWidgets = activeNav === 'dashboard';
 
-  return <div className="min-h-screen bg-gray-100 flex h-screen overflow-hidden">
+  return <div className="rumi-app-shell">
     <Sidebar
       items={seekerNavItems}
       activeNav={activeNav}
-      onNavChange={setActiveNav}
+      onNavChange={(navId) => {
+        setRoomDetailsOpen(false);
+        setRoomDetailsRoom(null);
+        setProfileDetailsOpen(false);
+        setProfileDetailsUser(null);
+        setActiveNav(navId);
+        if (navId === 'dashboard' && !isExploreLocked) {
+          loadCityRecommendations();
+        }
+      }}
       onLogout={onLogout}
     />
 
     {/* Main Content */}
-    <main className={`flex-1 ${activeNav === 'messages' ? 'h-screen flex flex-col overflow-hidden' : 'overflow-auto'}`}>
+    <main className={activeNav === 'messages' ? 'rumi-main-messages' : 'rumi-main-scroll'}>
       {/* Top Navigation Bar */}
-      <header className="bg-white shadow-sm px-8 py-4 sticky top-0 z-10">
-        <div className="flex items-center justify-between">
+      <header className="rumi-top-header bg-white shadow-sm px-8 py-4">
+        <div className="flex items-center justify-between gap-4">
           <h1 className="text-2xl font-semibold text-gray-900">{pageTitle}</h1>
 
           <div className="flex items-center gap-4">
             {/* Search */}
-            <div className="relative">
-              <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input type="text" placeholder="Search matches, locations, preferences" className="pl-10 pr-4 py-2 bg-gray-100 border-0 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-80" />
-            </div>
+            <ProfileSearchBar onSelectProfile={openProfileDetails} />
 
             {/* Icons */}
-            <button type="button" onClick={() => setActiveNav('notifications')} className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200 transition-colors relative">
+            <button type="button" onClick={() => setActiveNav('notifications')} className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200 transition-colors relative flex-shrink-0">
               <Bell size={20} />
               <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
             </button>
 
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
-                <button className="w-10 h-10 rounded-full overflow-hidden focus:outline-none">
+                <button type="button" aria-label="Open account menu" className="w-10 h-10 rounded-full overflow-hidden focus:outline-none flex-shrink-0 cursor-pointer">
                   <Avatar src={avatarSrc} alt="Profile" className="w-full h-full" />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-72 bg-white text-gray-900 border border-gray-200 rounded-xl shadow-lg p-1 z-[100]">
+              <DropdownMenuContent side="bottom" align="end" sideOffset={8} collisionPadding={12} className="rumi-account-dropdown">
                 <DropdownMenuLabel className="flex flex-col gap-1">
                   <span className="text-sm font-semibold text-gray-900">Account</span>
                   <span className="text-xs text-gray-500 truncate">
@@ -516,93 +724,255 @@ export const Dashboard = ({
         </div>}
         {activeNav === 'messages' ? <div className="w-full h-full">
           <ChatPage initialOtherUserId={chatWithUserId} />
-        </div> : <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main Column - Content switching (2/3 width) */}
+        </div> : activeNav === 'profile' ? (
+          <UserProfile />
+        ) : activeNav === 'settings' ? (
+          <SettingsPage userEmail={userEmail} />
+        ) : activeNav === 'requests' ? (
+          <div className="space-y-6">
+              <div className="bg-white rounded-3xl p-8 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+                  <div>
+                    <h2 className="text-2xl font-semibold text-gray-900 mb-1">Incoming Requests</h2>
+                    <p className="text-sm text-gray-500">Review people who want to connect with you.</p>
+                  </div>
+                  <span className="rumi-chip-blue">{requestsReceived.length} pending</span>
+                </div>
+
+                {loading ? (
+                  <div className="py-6 text-sm text-gray-500">Loading incoming requests…</div>
+                ) : requestsReceived.length === 0 ? (
+                  <div className="rumi-empty-state">
+                    <div className="rumi-empty-state-icon"><Heart size={18} /></div>
+                    <p className="text-sm font-semibold text-gray-900">No incoming requests yet</p>
+                    <p className="text-xs text-gray-500 mt-1">Your first roommate request might arrive soon!</p>
+                  </div>
+                ) : (
+                  <div className="rumi-requests-grid">
+                    {requestsReceived.map(request => {
+                      const receivedTime = formatTimestampLabel(request.createdAt);
+                      return (
+                        <div key={request.id} className="rumi-request-card">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <Avatar src={request.image} alt={request.name} className="w-12 h-12 rounded-full" />
+                              <div className="min-w-0">
+                                <p className="font-semibold text-gray-900 text-sm truncate">
+                                  {request.name}{request.age ? `, ${request.age}` : ''}
+                                </p>
+                                {request.city && (
+                                  <p className="text-xs text-gray-500 truncate">{request.city}</p>
+                                )}
+                                <p className="text-xs text-emerald-600 font-medium mt-0.5">{request.match}% Match</p>
+                              </div>
+                            </div>
+                            <span className="rumi-status-pill rumi-status-pill--pending">Pending</span>
+                          </div>
+
+                          {receivedTime && (
+                            <p className="text-xs text-gray-500 flex items-center gap-1">
+                              <Clock size={12} className="text-gray-400" />
+                              Received {receivedTime}
+                            </p>
+                          )}
+
+                          <div className="flex gap-2">
+                            <button type="button" onClick={async () => {
+                              try {
+                                setSending(true);
+                                await acceptRequest({ requestId: request.requestId });
+                                removeAcceptedUserFromUI(request);
+                                await reloadDashboard();
+                                const target = resolveChatTarget(request.userId);
+                                if (target) {
+                                  setChatWithUserId(target);
+                                  setActiveNav('messages');
+                                }
+                              } finally {
+                                setSending(false);
+                              }
+                            }} disabled={sending} className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-30">
+                              Accept & Chat
+                            </button>
+                            <button type="button" onClick={async () => {
+                              try {
+                                setSending(true);
+                                await rejectRequest({ requestId: request.requestId });
+                                await reloadDashboard();
+                              } finally {
+                                setSending(false);
+                              }
+                            }} disabled={sending} className="flex-1 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-30">
+                              Reject
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-white rounded-3xl p-8 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+                  <div>
+                    <h2 className="text-xl font-semibold text-gray-900 mb-1">Sent Requests</h2>
+                    <p className="text-sm text-gray-500">Track requests you have sent to roommates and rooms.</p>
+                  </div>
+                  <span className="rumi-chip-neutral">{sentRequests.length} total</span>
+                </div>
+
+                {loading ? (
+                  <div className="py-6 text-sm text-gray-500">Loading sent requests…</div>
+                ) : sentRequests.length === 0 ? (
+                  <div className="rumi-empty-state">
+                    <div className="rumi-empty-state-icon"><Send size={18} /></div>
+                    <p className="text-sm font-semibold text-gray-900">No requests sent yet</p>
+                    <p className="text-xs text-gray-500 mt-1">Explore available rooms and send your first request!</p>
+                  </div>
+                ) : (
+                  <div className="rumi-requests-grid">
+                    {sentRequests.map(request => {
+                      const sentTime = formatTimestampLabel(request.createdAt);
+                      const statusClass = request.status === 'accepted'
+                        ? 'rumi-status-pill--connected'
+                        : request.status === 'rejected'
+                          ? 'rumi-status-pill--rejected'
+                          : 'rumi-status-pill--pending';
+                      return (
+                        <div key={request.id} className="rumi-request-card">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <Avatar src={request.image} alt={request.name} className="w-10 h-10 rounded-full" />
+                              <div className="min-w-0">
+                                <p className="font-semibold text-gray-900 text-sm truncate">
+                                  {request.name}{request.age ? `, ${request.age}` : ''}
+                                </p>
+                                {request.city && (
+                                  <p className="text-xs text-gray-500 truncate">{request.city}</p>
+                                )}
+                                <p className="text-xs text-emerald-600 font-medium mt-0.5">{request.match}% Match</p>
+                              </div>
+                            </div>
+                            <span className={`rumi-status-pill ${statusClass}`}>
+                              {request.status === 'pending' && <Clock size={11} />}
+                              {request.status === 'accepted' && <Check size={11} />}
+                              {request.status === 'rejected' && <XCircle size={11} />}
+                              {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                            </span>
+                          </div>
+
+                          {sentTime && (
+                            <p className="text-xs text-gray-500 flex items-center gap-1">
+                              <Send size={11} className="text-gray-400" />
+                              Sent {sentTime}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-white rounded-3xl p-8 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+                  <div>
+                    <h2 className="text-xl font-semibold text-gray-900 mb-1">Active Matches</h2>
+                    <p className="text-sm text-gray-500">Accepted roommate connections ready to chat.</p>
+                  </div>
+                  <span className="rumi-status-pill rumi-status-pill--connected">{activeMatches.length} active</span>
+                </div>
+
+                {loading ? (
+                  <div className="py-6 text-sm text-gray-500">Loading active matches…</div>
+                ) : activeMatches.length === 0 ? (
+                  <div className="rumi-empty-state">
+                    <div className="rumi-empty-state-icon"><Users size={18} /></div>
+                    <p className="text-sm font-semibold text-gray-900">No active matches yet</p>
+                    <p className="text-xs text-gray-500 mt-1">Your next roommate connection could be just around the corner.</p>
+                  </div>
+                ) : (
+                  <div className="rumi-requests-grid">
+                    {activeMatches.map(match => {
+                      const matchedTime = formatTimestampLabel(match.matchedAt);
+                      return (
+                        <div key={match.id} className="rumi-request-card">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <Avatar src={match.image} alt={match.name} className="w-12 h-12 rounded-full" />
+                              <div className="min-w-0">
+                                <p className="font-semibold text-gray-900 text-sm truncate">
+                                  {match.name}{match.age ? `, ${match.age}` : ''}
+                                </p>
+                                {match.city && (
+                                  <p className="text-xs text-gray-500 truncate">{match.city}</p>
+                                )}
+                                <p className="text-xs text-emerald-600 font-medium mt-0.5">{match.match}% Match</p>
+                              </div>
+                            </div>
+                            <span className="rumi-status-pill rumi-status-pill--connected">
+                              <Check size={11} />
+                              Connected
+                            </span>
+                          </div>
+
+                          {matchedTime && (
+                            <p className="text-xs text-gray-500 flex items-center gap-1">
+                              <Clock size={11} className="text-gray-400" />
+                              Matched {matchedTime}
+                            </p>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const target = resolveChatTarget(match.userId ?? match.id);
+                              if (!target) return;
+                              setChatWithUserId(target);
+                              setActiveNav('messages');
+                            }}
+                            className="w-full px-3 py-2 rumi-btn-primary text-sm inline-flex items-center justify-center gap-2"
+                          >
+                            <MessageCircle size={15} />
+                            Open Chat
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+        ) : activeNav === 'notifications' ? (
+          <div className="bg-white rounded-3xl p-8 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+              <div>
+                <h2 className="text-2xl font-semibold text-gray-900 mb-1">Notifications</h2>
+                <p className="text-sm text-gray-500">Recent activity from your account.</p>
+              </div>
+              <span className="rumi-chip-blue">{notifications.length} updates</span>
+            </div>
+            {notifications.length === 0 ? (
+              <div className="rumi-empty-state">
+                <div className="rumi-empty-state-icon"><Bell size={18} /></div>
+                <p className="text-sm font-semibold text-gray-900">No notifications yet</p>
+                <p className="text-xs text-gray-500 mt-1">Updates about requests and matches will appear here.</p>
+              </div>
+            ) : (
+              <div className="rumi-notifications-grid">
+                {notifications.map((n) => (
+                  <div key={n.id} className="p-4 rounded-xl border border-gray-100 bg-gray-50">
+                    <p className="text-sm font-semibold text-gray-900">{n.title}</p>
+                    <p className="text-xs text-gray-500 mt-1">{n.subtitle}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Main Column - Content switching */}
           <div className="lg:col-span-2">
-            {activeNav === 'profile' && <UserProfile />}
-            {activeNav === 'settings' && <SettingsPage />}
-
-            {activeNav === 'requests' && <div className="bg-white rounded-3xl p-8 shadow-sm space-y-8">
-              <div>
-                <h2 className="text-2xl font-semibold text-gray-900 mb-1">Requests</h2>
-                <p className="text-gray-500">Review incoming and sent requests.</p>
-              </div>
-
-              <div>
-                <h3 className="font-semibold text-gray-900 mb-4">Incoming Requests</h3>
-                <div className="space-y-4">
-                  {requestsReceived.length === 0 ? <p className="text-sm text-gray-500">No incoming requests.</p> : requestsReceived.map(request => <div key={request.id} className="flex items-center justify-between gap-4 p-4 bg-gray-50 rounded-xl border border-gray-100">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Avatar src={request.image} alt={request.name} className="w-12 h-12 rounded-full" />
-                      <div className="min-w-0">
-                        <p className="font-semibold text-gray-900 text-sm truncate">{request.name}, {request.age}</p>
-                        <p className="text-xs text-emerald-600 font-medium">{request.match}% Match</p>
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <button type="button" onClick={async () => {
-                        try {
-                          setSending(true);
-                          await acceptRequest({ requestId: request.requestId });
-                          removeAcceptedUserFromUI(request);
-                          await reloadDashboard();
-                          const target = resolveChatTarget(request.userId);
-                          if (target) {
-                            setChatWithUserId(target);
-                            setActiveNav('messages');
-                          }
-                        } finally {
-                          setSending(false);
-                        }
-                      }} disabled={sending} className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-                        Accept
-                      </button>
-                      <button type="button" onClick={async () => {
-                        try {
-                          setSending(true);
-                          await rejectRequest({ requestId: request.requestId });
-                          await reloadDashboard();
-                        } finally {
-                          setSending(false);
-                        }
-                      }} disabled={sending} className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50">
-                        Reject
-                      </button>
-                    </div>
-                  </div>)}
-                </div>
-              </div>
-
-              <div>
-                <h3 className="font-semibold text-gray-900 mb-4">Sent Requests</h3>
-                <div className="space-y-3">
-                  {sentRequests.length === 0 ? <p className="text-sm text-gray-500">No sent requests yet.</p> : sentRequests.map(request => <div key={request.id} className="flex items-center justify-between gap-4 p-4 bg-gray-50 rounded-xl border border-gray-100">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Avatar src={request.image} alt={request.name} className="w-10 h-10 rounded-full" />
-                      <div className="min-w-0">
-                        <p className="font-semibold text-gray-900 text-sm truncate">{request.name}, {request.age}</p>
-                        <p className="text-xs text-gray-500">{request.match}% Match</p>
-                      </div>
-                    </div>
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${request.status === 'pending' ? 'bg-yellow-50 text-yellow-600' : request.status === 'accepted' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
-                      {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
-                    </span>
-                  </div>)}
-                </div>
-              </div>
-            </div>}
-
-            {activeNav === 'notifications' && <div className="bg-white rounded-3xl p-8 shadow-sm">
-              <h2 className="text-2xl font-semibold text-gray-900 mb-1">Notifications</h2>
-              <p className="text-gray-500 mb-6">Recent activity from your account.</p>
-              <div className="space-y-3">
-                {notifications.length === 0 ? <p className="text-sm text-gray-500">No notifications yet.</p> : notifications.map((n) => <div key={n.id} className="p-4 rounded-xl border border-gray-100 bg-gray-50">
-                  <p className="text-sm font-semibold text-gray-900">{n.title}</p>
-                  <p className="text-xs text-gray-500 mt-1">{n.subtitle}</p>
-                </div>)}
-              </div>
-            </div>}
-
             {activeNav === 'dashboard' && <div className="bg-white rounded-3xl p-8 shadow-sm">
               <div className="mb-6">
                 {isExploreLocked && !revealExploreMatches ? <>
@@ -619,13 +989,13 @@ export const Dashboard = ({
               </div>
 
               {/* Swipe Card Stack */}
-              {(!isExploreLocked || revealExploreMatches) && <div className="relative h-[600px] flex items-center justify-center">
+              {(!isExploreLocked || revealExploreMatches) && <div className="rumi-swipe-stage">
                 <AnimatePresence>
                   {loading ? <div className="text-center text-gray-400">
                     <Users size={64} className="mx-auto mb-4 opacity-50" />
                     <p className="text-lg">Loading matches…</p>
                   </div> : swipeCards.length > 0 ? swipeCards.map((card, index) => index < 3 && <motion.div key={card.id} className="absolute w-full max-w-md" style={{
-                    zIndex: swipeCards.length - index
+                    zIndex: 3 - index
                   }} initial={index === 0 ? {
                     scale: 1,
                     y: 0,
@@ -650,7 +1020,7 @@ export const Dashboard = ({
                   }}>
                     <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-gray-100">
                       {/* Profile Image */}
-                      <div className="relative h-80">
+                      <div className="rumi-swipe-media">
                         <Avatar src={card.image} alt={card.name} className="w-full h-full" />
                         {/* Match Badge */}
                         <div className="absolute top-4 right-4 bg-emerald-500 text-white px-4 py-2 rounded-full font-semibold text-sm shadow-lg">
@@ -663,7 +1033,7 @@ export const Dashboard = ({
                         <h3 className="text-2xl font-semibold text-gray-900 mb-1">
                           {card.name}, {card.age}
                         </h3>
-                        <p className="text-gray-600 mb-4 leading-relaxed">
+                        <p className="text-gray-600 mb-3 leading-relaxed line-clamp-2">
                           {card.bio}
                         </p>
 
@@ -675,10 +1045,12 @@ export const Dashboard = ({
                         </div>
 
                         {/* Budget */}
-                        <div className="flex items-center gap-2 text-gray-700">
-                          <DollarSign size={20} className="text-blue-600" />
-                          <span className="font-semibold">Budget: ₹{card.budget}k/month</span>
-                        </div>
+                        {card.budgetLabel && (
+                          <div className="flex items-center gap-2 text-gray-700">
+                            <DollarSign size={20} className="text-blue-600" />
+                            <span className="font-semibold">Budget: {card.budgetLabel}</span>
+                          </div>
+                        )}
 
                         {/* Offerer room details */}
                         {card.hasRoom && (() => {
@@ -713,7 +1085,50 @@ export const Dashboard = ({
               </div>}
 
               {/* Recommended Rooms */}
-              <RecommendedRoomsSection rooms={recommendedRooms} loading={roomsLoading} title="Recommended Rooms" />
+              <RecommendedRoomsSection
+                rooms={recommendedRooms}
+                loading={roomsLoading}
+                title="Recommended Rooms"
+                roomStatusMap={roomStatusMap}
+                currentUserId={currentUserId}
+                availableCities={availableRoomCities}
+                selectedCity={selectedRoomCity}
+                filterByLocation={filterRoomsByLocation}
+                onSelectCity={(nextCity) => {
+                  setSelectedRoomCity(nextCity);
+                  if (filterRoomsByLocation) {
+                    loadRecommendedRooms(nextCity, true);
+                  }
+                }}
+                onToggleFilterByLocation={(checked) => {
+                  let targetCity = selectedRoomCity;
+                  if (checked && !targetCity) {
+                    targetCity = userCityLabel || availableRoomCities[0] || '';
+                    setSelectedRoomCity(targetCity);
+                  }
+                  setFilterRoomsByLocation(checked);
+                  loadRecommendedRooms(targetCity, checked);
+                }}
+                onLikeRoom={handleLikeRoom}
+                onPassRoom={handlePassRoom}
+              />
+
+              {/* Find Your Next Rumi */}
+              {(!isExploreLocked || revealExploreMatches) && (
+                <FindNextRumiSection
+                  profiles={cityProfiles}
+                  city={userCityLabel}
+                  availableCities={availableRumiCities}
+                  missingCity={missingUserCity}
+                  loading={cityLoading}
+                  error={cityError}
+                  onSelectCity={(nextCity) => {
+                    loadCityRecommendations(nextCity);
+                  }}
+                  onSelectProfile={openProfileDetails}
+                  onSetCity={() => setActiveNav('profile')}
+                />
+              )}
             </div>}
           </div>
 
@@ -725,55 +1140,74 @@ export const Dashboard = ({
                 <Heart size={20} className="text-blue-600" />
                 Requests Received
               </h3>
-              <div className="space-y-4">
-                {requestsReceived.map(request => <div key={request.id} className="space-y-3">
-                  <div className="flex items-center gap-3">
-                    <Avatar src={request.image} alt={request.name} className="w-12 h-12 rounded-full" />
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-gray-900 text-sm">
-                        {request.name}, {request.age}
-                      </p>
-                      <p className="text-xs text-emerald-600 font-medium">
-                        {request.match}% Match
-                      </p>
+              {loading ? (
+                <div className="py-6 text-center text-sm text-gray-500">
+                  Loading requests…
+                </div>
+              ) : receivedError ? (
+                <div className="rumi-empty-state">
+                  <p className="text-sm font-semibold text-gray-900">Unable to load requests</p>
+                  <p className="text-xs text-gray-500 mt-1">Please try refreshing in a moment.</p>
+                </div>
+              ) : requestsReceived.length === 0 ? (
+                <div className="rumi-empty-state">
+                  <div className="rumi-empty-state-icon">
+                    <Heart size={18} />
+                  </div>
+                  <p className="text-sm font-semibold text-gray-900">No requests yet</p>
+                  <p className="text-xs text-gray-500 mt-1">Your first roommate request might arrive soon!</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {requestsReceived.map(request => <div key={request.id} className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <Avatar src={request.image} alt={request.name} className="w-12 h-12 rounded-full" />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-gray-900 text-sm">
+                          {request.name}, {request.age}
+                        </p>
+                        <p className="text-xs text-emerald-600 font-medium">
+                          {request.match}% Match
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button type="button" onClick={async () => {
-                      try {
-                        setSending(true);
-                        await acceptRequest({
-                          requestId: request.requestId
-                        });
-                        removeAcceptedUserFromUI(request);
-                        await reloadDashboard();
-                        const target = resolveChatTarget(request.userId);
-                        if (target) {
-                          setChatWithUserId(target);
-                          setActiveNav('messages');
+                    <div className="flex gap-2">
+                      <button type="button" onClick={async () => {
+                        try {
+                          setSending(true);
+                          await acceptRequest({
+                            requestId: request.requestId
+                          });
+                          removeAcceptedUserFromUI(request);
+                          await reloadDashboard();
+                          const target = resolveChatTarget(request.userId);
+                          if (target) {
+                            setChatWithUserId(target);
+                            setActiveNav('messages');
+                          }
+                        } finally {
+                          setSending(false);
                         }
-                      } finally {
-                        setSending(false);
-                      }
-                    }} disabled={sending} className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50">
-                      Accept & Chat
-                    </button>
-                    <button type="button" onClick={async () => {
-                      try {
-                        setSending(true);
-                        await rejectRequest({
-                          requestId: request.requestId
-                        });
-                        await reloadDashboard();
-                      } finally {
-                        setSending(false);
-                      }
-                    }} disabled={sending} className="flex-1 px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors disabled:opacity-50">
-                      Reject
-                    </button>
-                  </div>
-                </div>)}
-              </div>
+                      }} disabled={sending} className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50">
+                        Accept & Chat
+                      </button>
+                      <button type="button" onClick={async () => {
+                        try {
+                          setSending(true);
+                          await rejectRequest({
+                            requestId: request.requestId
+                          });
+                          await reloadDashboard();
+                        } finally {
+                          setSending(false);
+                        }
+                      }} disabled={sending} className="flex-1 px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors disabled:opacity-50">
+                        Reject
+                      </button>
+                    </div>
+                  </div>)}
+                </div>
+              )}
             </div>}
 
             {/* Sent Requests */}
@@ -782,23 +1216,42 @@ export const Dashboard = ({
                 <Send size={20} className="text-blue-600" />
                 Sent Requests
               </h3>
-              <div className="space-y-3">
-                {sentRequests.map(request => <div key={request.id} className="flex items-center gap-3">
-                  <Avatar src={request.image} alt={request.name} className="w-10 h-10 rounded-full" />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-gray-900 text-sm truncate">
-                      {request.name}, {request.age}
-                    </p>
-                    <p className="text-xs text-gray-500">{request.match}% Match</p>
+              {loading ? (
+                <div className="py-6 text-center text-sm text-gray-500">
+                  Loading sent requests…
+                </div>
+              ) : sentError ? (
+                <div className="rumi-empty-state">
+                  <p className="text-sm font-semibold text-gray-900">Unable to load sent requests</p>
+                  <p className="text-xs text-gray-500 mt-1">Please try refreshing in a moment.</p>
+                </div>
+              ) : sentRequests.length === 0 ? (
+                <div className="rumi-empty-state">
+                  <div className="rumi-empty-state-icon">
+                    <Send size={18} />
                   </div>
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${request.status === 'pending' ? 'bg-yellow-50 text-yellow-600' : request.status === 'accepted' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
-                    {request.status === 'pending' && <Clock size={12} className="inline mr-1" />}
-                    {request.status === 'accepted' && <Check size={12} className="inline mr-1" />}
-                    {request.status === 'rejected' && <XCircle size={12} className="inline mr-1" />}
-                    {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
-                  </span>
-                </div>)}
-              </div>
+                  <p className="text-sm font-semibold text-gray-900">No requests sent yet</p>
+                  <p className="text-xs text-gray-500 mt-1">Explore available rooms and send your first request!</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {sentRequests.map(request => <div key={request.id} className="flex items-center gap-3">
+                    <Avatar src={request.image} alt={request.name} className="w-10 h-10 rounded-full" />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-gray-900 text-sm truncate">
+                        {request.name}, {request.age}
+                      </p>
+                      <p className="text-xs text-gray-500">{request.match}% Match</p>
+                    </div>
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${request.status === 'pending' ? 'bg-yellow-50 text-yellow-600' : request.status === 'accepted' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                      {request.status === 'pending' && <Clock size={12} className="inline mr-1" />}
+                      {request.status === 'accepted' && <Check size={12} className="inline mr-1" />}
+                      {request.status === 'rejected' && <XCircle size={12} className="inline mr-1" />}
+                      {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                    </span>
+                  </div>)}
+                </div>
+              )}
             </div>}
 
             {/* Active Matches */}
@@ -807,25 +1260,44 @@ export const Dashboard = ({
                 <Users size={20} className="text-blue-600" />
                 Active Matches
               </h3>
-              <div className="space-y-3">
-                {activeMatches.map(match => <div key={match.id} className="flex items-center gap-3">
-                  <Avatar src={match.image} alt={match.name} className="w-10 h-10 rounded-full" />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-gray-900 text-sm truncate">
-                      {match.name}
-                    </p>
-                    <p className="text-xs text-emerald-600 font-medium">{match.match}% Match</p>
+              {loading ? (
+                <div className="py-6 text-center text-sm text-gray-500">
+                  Loading matches…
+                </div>
+              ) : matchesError && activeMatches.length === 0 ? (
+                <div className="rumi-empty-state">
+                  <p className="text-sm font-semibold text-gray-900">Unable to load matches</p>
+                  <p className="text-xs text-gray-500 mt-1">Please try refreshing in a moment.</p>
+                </div>
+              ) : activeMatches.length === 0 ? (
+                <div className="rumi-empty-state">
+                  <div className="rumi-empty-state-icon">
+                    <Users size={18} />
                   </div>
-                  <button type="button" onClick={() => {
-                    const target = resolveChatTarget(match.userId ?? match.id);
-                    if (!target) return;
-                    setChatWithUserId(target);
-                    setActiveNav('messages');
-                  }} className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white hover:bg-blue-700 transition-colors">
-                    <MessageCircle size={16} />
-                  </button>
-                </div>)}
-              </div>
+                  <p className="text-sm font-semibold text-gray-900">No active matches yet</p>
+                  <p className="text-xs text-gray-500 mt-1">Your next roommate connection could be just around the corner.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {activeMatches.map(match => <div key={match.id} className="flex items-center gap-3">
+                    <Avatar src={match.image} alt={match.name} className="w-10 h-10 rounded-full" />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-gray-900 text-sm truncate">
+                        {match.name}
+                      </p>
+                      <p className="text-xs text-emerald-600 font-medium">{match.match}% Match</p>
+                    </div>
+                    <button type="button" onClick={() => {
+                      const target = resolveChatTarget(match.userId ?? match.id);
+                      if (!target) return;
+                      setChatWithUserId(target);
+                      setActiveNav('messages');
+                    }} className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white hover:bg-blue-700 transition-colors">
+                      <MessageCircle size={16} />
+                    </button>
+                  </div>)}
+                </div>
+              )}
             </div>}
 
             {/* Quick Actions */}
@@ -879,10 +1351,40 @@ export const Dashboard = ({
       </div>
     </main>
 
-    <RoomDetailsModal open={roomDetailsOpen} room={roomDetailsRoom} onClose={() => {
-      setRoomDetailsOpen(false);
-      setRoomDetailsRoom(null);
-    }} />
+    <RoomDetailsModal
+      open={roomDetailsOpen}
+      room={roomDetailsRoom}
+      interactionStatus={roomDetailsRoom?._id ? (roomStatusMap[String(roomDetailsRoom._id)] || roomDetailsRoom.userInteractionStatus || null) : null}
+      currentUserId={currentUserId}
+      onLikeRoom={handleLikeRoom}
+      onPassRoom={handlePassRoom}
+      onClose={() => {
+        setRoomDetailsOpen(false);
+        setRoomDetailsRoom(null);
+      }}
+    />
+
+    <ProfileDetailsModal
+      open={profileDetailsOpen}
+      profile={profileDetailsUser}
+      requestStatus={
+        profileDetailsUser?._id
+          ? (profileStatusMap[String(profileDetailsUser._id)] || profileDetailsUser.requestStatus || null)
+          : null
+      }
+      onSendRequest={handleSendProfileRequest}
+      onPassProfile={handlePassProfile}
+      onOpenChat={(targetUserId) => {
+        const target = resolveChatTarget(targetUserId);
+        if (!target) return;
+        setChatWithUserId(target);
+        setActiveNav('messages');
+      }}
+      onClose={() => {
+        setProfileDetailsOpen(false);
+        setProfileDetailsUser(null);
+      }}
+    />
 
     {/* Full-screen lock prompt for explore mode */}
     {showExploreProfileModal && <div className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center p-6">

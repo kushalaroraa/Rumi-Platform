@@ -114,7 +114,69 @@ async function getChatThreads(req, res) {
   }
 }
 
+async function sendMessage(req, res) {
+  try {
+    const currentUserId = req.userId;
+    const { otherUserId, message, roomId = null } = req.body || {};
+    const text = String(message || '').trim();
+
+    if (!otherUserId) {
+      return res.status(400).json({ success: false, message: 'otherUserId is required.' });
+    }
+    if (!text) {
+      return res.status(400).json({ success: false, message: 'Message cannot be empty.' });
+    }
+    if (text.length > 2000) {
+      return res.status(400).json({ success: false, message: 'Message cannot exceed 2000 characters.' });
+    }
+
+    const access = await canUsersChat(currentUserId, otherUserId, roomId);
+    if (!access.allowed) {
+      return res.status(403).json({ success: false, message: access.reason || 'Chat not allowed.' });
+    }
+
+    const doc = await Message.create({
+      roomKey: access.roomKey,
+      roomId: access.roomId || null,
+      participants: [currentUserId, otherUserId],
+      senderId: currentUserId,
+      receiverId: otherUserId,
+      message: text,
+      seenBy: [currentUserId],
+    });
+
+    const populated = await Message.findById(doc._id)
+      .populate('senderId', 'name photo profilePicture')
+      .lean();
+
+    const broadcastMsg = {
+      _id: populated._id,
+      senderId: populated.senderId,
+      receiverId: populated.receiverId,
+      roomId: populated.roomId || null,
+      roomKey: populated.roomKey,
+      message: populated.message,
+      createdAt: populated.createdAt,
+      deliveredAt: populated.deliveredAt,
+    };
+
+    const io = req.app?.get?.('io');
+    if (io) {
+      io.to([access.roomKey, `user:${String(currentUserId)}`, `user:${String(otherUserId)}`]).emit('new_message', broadcastMsg);
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: toClientMessage(populated, currentUserId),
+    });
+  } catch (err) {
+    console.error('sendMessage error:', err);
+    return res.status(500).json({ success: false, message: err.message || 'Server error.' });
+  }
+}
+
 module.exports = {
   getChatHistory,
   getChatThreads,
+  sendMessage,
 };

@@ -45,6 +45,9 @@ async function sendRequest(req, res) {
         if (roomIdStr) {
             room = await Room.findById(roomIdStr);
             if (!room) return res.status(404).json({ success: false, message: 'Room not found.' });
+            if (room.status && room.status !== 'active') {
+                return res.status(400).json({ success: false, message: 'This room is no longer available.' });
+            }
 
             const ownerId = room.ownerUserId?.toString?.();
 
@@ -155,8 +158,34 @@ async function passRequest(req, res) {
         if (!toUserId) {
             return res.status(400).json({ success: false, message: 'toUserId required.' });
         }
+        if (fromUserId.toString() === toUserId.toString()) {
+            return res.status(400).json({ success: false, message: 'Cannot pass your own profile or room.' });
+        }
 
         const roomIdStr = roomId ? String(roomId) : null;
+        if (roomIdStr) {
+            const room = await Room.findById(roomIdStr);
+            if (!room) {
+                return res.status(404).json({ success: false, message: 'Room not found.' });
+            }
+            const ownerId = room.ownerUserId?.toString?.();
+            if (ownerId === fromUserId.toString()) {
+                return res.status(400).json({ success: false, message: 'Cannot pass your own room.' });
+            }
+            if (ownerId !== toUserId.toString()) {
+                return res.status(403).json({ success: false, message: 'Room pass must target the room owner.' });
+            }
+        }
+
+        const existing = await Request.findOne({
+            fromUserId,
+            toUserId,
+            roomId: roomIdStr || null,
+        });
+        if (existing && existing.status === 'accepted') {
+            return res.status(409).json({ success: false, message: 'Already connected.' });
+        }
+
         const doc = await Request.findOneAndUpdate(
             { fromUserId, toUserId, roomId: roomIdStr || null },
             { $set: { status: 'rejected', respondedAt: new Date() } },
@@ -165,7 +194,7 @@ async function passRequest(req, res) {
 
         return res.status(201).json({
             success: true,
-            message: 'Profile passed.',
+            message: roomIdStr ? 'Room passed.' : 'Profile passed.',
             request: doc?.toObject?.() ?? doc,
         });
     } catch (err) {
